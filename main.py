@@ -1,9 +1,5 @@
-# def main():
-#     print("Hello from videoflow!")
+from app.main import app
+import uvicorn
 
-
-# if __name__ == "__main__":
-#     main()
-
-
-from app.utils.file_processor.provider import read_file, write_file
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)
