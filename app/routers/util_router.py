@@ -11,7 +11,9 @@ router = APIRouter(prefix="/util", tags=["工具路由"])
 
 @router.post("/write-file")
 async def write_file_endpoint(request: WriteFileRequest):
+    print('要保存的文件内容',request.content, type(request.content))
     res = await write_file(request.file_name, request.content, request.path)
+    print('write函数执行完毕')
     if res:
         return {"message": "File writing success"}
     else:
@@ -23,5 +25,4 @@ async def read_file_endpoint(
     request: ReadFileRequest,
 ):
     path = await get_file_path(request.file_name, request.path)
-    print(type(path))
     return FileResponse(path, media_type="image/jpeg")

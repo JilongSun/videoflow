@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import TypeVar, Awaitable, Any, Optional
+from typing import TypeVar, Awaitable, Any, Optional, Annotated
 
-FP = TypeVar("FP", bound="file_processor",)
+FP = TypeVar("FP", bound="file_processor")
 
 
 current_path = Path(__file__)
@@ -12,11 +12,13 @@ root_path = current_path.parent.parent.parent.parent
 
 class file_processor(ABC):
     @abstractmethod
-    async def read_file(self, filename: str, path: Optional[str] = None):
+    async def read_file(self, filename: str, path: Optional[str] = None) -> bytes:
         pass
 
     @abstractmethod
-    async def write_file(self, filename: str, content: bytes, path: Optional[str] = None):
+    async def write_file(
+        self, filename: str, content: Any, path: Optional[str] = None
+    ) -> bool:
         pass
 
     @abstractmethod
@@ -25,5 +27,5 @@ class file_processor(ABC):
 
     @property
     @abstractmethod
-    def extensions(self) -> tuple[str]:
+    def extensions(self) -> tuple[str, ...]:
         pass

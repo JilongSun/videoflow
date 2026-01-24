@@ -1,29 +1,28 @@
 from .base import file_processor
-import os, aiofiles, httpx
+import os, aiofiles
 from pathlib import Path
-from typing import Optional, cast
-from ...models.router_model import file_content
+from typing import Optional
 
 
 current_path = Path(__file__)
 root_path = current_path.parent.parent.parent.parent
 
 
-class ImageProcessor(file_processor):
+class DocProcessor(file_processor):
     def __init__(
         self,
         file_reader_path: Optional[str] = None,
         file_writer_path: Optional[str] = None,
     ):
         self.file_reader_folder = file_reader_path or str(
-            root_path / "outputs" / "images"
+            root_path / "outputs" / "docs"
         )
         self.file_writer_folder = file_writer_path or str(
-            root_path / "outputs" / "images"
+            root_path / "outputs" / "docs"
         )
         os.makedirs(self.file_reader_folder, exist_ok=True)
         os.makedirs(self.file_writer_folder, exist_ok=True)
-        self._extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png")
+        self._extensions: tuple[str, ...] = (".txt", ".docx")
 
     async def read_file(self, filename: str, path: Optional[str] = None):
         async with aiofiles.open(os.path.join(path or self.file_reader_folder, filename), "rb") as f:
@@ -31,9 +30,8 @@ class ImageProcessor(file_processor):
         return image
 
     async def write_file(
-        self, filename: str, content: file_content, path: Optional[str] = None
+        self, filename: str, content: bytes, path: Optional[str] = None
     ) -> bool:
-        content = await self._get_bin(content)
         async with aiofiles.open(os.path.join(path or self.file_writer_folder, filename), "wb") as f:
             await f.write(content)
         return True
@@ -45,15 +43,4 @@ class ImageProcessor(file_processor):
     def extensions(self) -> tuple[str, ...]:
         return self._extensions
 
-    async def _get_bin(self, content: file_content) -> bytes:
-        if isinstance(content, bytes):
-            return content
-        elif isinstance(content, str):
-            if content.startswith(("http://", "https://")):
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(content)
-                    response.raise_for_status()  # 检查请求是否成功
-                return response.content
-        raise ValueError(f"Unsupported content type: {type(content)}")
-
-image_processor = ImageProcessor()
+doc_processor = DocProcessor()
