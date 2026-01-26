@@ -3,7 +3,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import TypeVar, Awaitable, Any, Optional, Annotated
 from ...models.router_model import file_content
-from app.utils.logger_config import log
+from app.utils import log
 
 FP = TypeVar("FP", bound="file_processor")
 
