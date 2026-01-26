@@ -1,7 +1,5 @@
-import loguru
 from loguru import logger
-import sys
-import os
+import sys, os
 from pathlib import Path
 from typing import Optional
 
@@ -117,6 +115,6 @@ if __name__ == "__main__":
     named_logger.info("来自MyApp的信息")
     
     try:
-        1 / 0
+        raise
     except:
         log.exception("捕获到异常")
