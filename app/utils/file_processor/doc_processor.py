@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 import os, aiofiles, base64
 
+__all__ = ["doc_processor"]
 
 current_path = Path(__file__)
 root_path = current_path.parent.parent.parent.parent
@@ -17,11 +18,15 @@ class DocProcessor(file_processor):
         file_writer_path: Optional[str] = None,
     ):
         super().__init__()
-        self.file_reader_folder = file_reader_path or str(
-            root_path / "outputs" / "docs"
+        self.file_reader_folder = (
+            file_reader_path
+            or os.getenv("DOCUMENT_OUTPUT_PATH", None)
+            or str(root_path / "outputs" / "docs")
         )
-        self.file_writer_folder = file_writer_path or str(
-            root_path / "outputs" / "docs"
+        self.file_writer_folder = (
+            file_writer_path
+            or os.getenv("DOCUMENT_OUTPUT_PATH", None)
+            or str(root_path / "outputs" / "docs")
         )
         os.makedirs(self.file_reader_folder, exist_ok=True)
         os.makedirs(self.file_writer_folder, exist_ok=True)

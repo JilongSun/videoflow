@@ -5,6 +5,8 @@ from ...models.router_model import file_content
 from app.utils.logger_config import log
 import os, aiofiles, httpx, base64
 
+__all__ = ["image_processor"]
+
 current_path = Path(__file__)
 root_path = current_path.parent.parent.parent.parent
 
@@ -16,11 +18,15 @@ class ImageProcessor(file_processor):
         file_writer_path: Optional[str] = None,
     ):
         super().__init__()
-        self.file_reader_folder = file_reader_path or str(
-            root_path / "outputs" / "images"
+        self.file_reader_folder = (
+            file_reader_path
+            or os.getenv("IMAGE_OUTPUT_PATH", None)
+            or str(root_path / "outputs" / "images")
         )
-        self.file_writer_folder = file_writer_path or str(
-            root_path / "outputs" / "images"
+        self.file_writer_folder = (
+            file_writer_path
+            or os.getenv("IMAGE_OUTPUT_PATH", None)
+            or str(root_path / "outputs" / "images")
         )
         os.makedirs(self.file_reader_folder, exist_ok=True)
         os.makedirs(self.file_writer_folder, exist_ok=True)
@@ -57,7 +63,6 @@ class ImageProcessor(file_processor):
     @property
     def extensions(self) -> tuple[str, ...]:
         return self._extensions
-
 
 
 image_processor = ImageProcessor()

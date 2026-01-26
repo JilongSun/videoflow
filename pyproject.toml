@@ -11,6 +11,7 @@ dependencies = [
     "lark-oapi>=1.5.2",
     "loguru>=0.7.3",
     "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
     "requests>=2.32.5",
     "uvicorn>=0.40.0",
 ]

@@ -14,7 +14,13 @@ root_path = current_path.parent.parent.parent.parent
 
 class file_processor(ABC):
     def __init__(self) -> None:
-        self.n8n_binary_path = Path('C:\\Users\\Administrator\\.n8n\\binaryData')
+        pp = os.getenv('N8N_BINARY_PATH', None)
+        if not pp:
+            log.error("N8N_BINARY_PATH 环境变量未配置")
+            raise ValueError("N8N_BINARY_PATH 环境变量未配置")
+        else:
+            self.n8n_binary_path = Path(pp)
+            log.info(f"n8n二进制文件存储地址: {self.n8n_binary_path}")
 
     @abstractmethod
     async def read_file(self, filename: str, path: Optional[str] = None) -> bytes:

@@ -3,6 +3,8 @@ from .doc_processor import doc_processor
 from .base import file_processor, FP
 from typing import TypeVar, Awaitable, Any, Optional, Generic, cast
 
+__all__ = ["file_processor_provider", "read_file", "write_file", "get_file_path"]
+
 
 class FileProcessorProvider(Generic[FP]):
     def __init__(self):

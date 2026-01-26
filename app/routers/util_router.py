@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
-from ..utils.file_processor.provider import write_file, read_file, get_file_path
+from ..utils.file_processor import write_file, read_file, get_file_path
 from ..models.router_model import WriteFileRequest, ReadFileRequest
-from app.utils.logger_config import log
+from app.utils import log
 
-__all__: list[str] = ["router"]
+__all__ = ["router"]
 
 
 router = APIRouter(prefix="/util", tags=["工具路由"])
