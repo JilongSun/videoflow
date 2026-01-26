@@ -1,9 +1,9 @@
 from .base import file_processor
-import os, aiofiles, httpx
 from pathlib import Path
 from typing import Optional, cast
 from ...models.router_model import file_content
-
+from app.utils.logger_config import log
+import os, aiofiles, httpx, base64
 
 current_path = Path(__file__)
 root_path = current_path.parent.parent.parent.parent
@@ -15,6 +15,7 @@ class ImageProcessor(file_processor):
         file_reader_path: Optional[str] = None,
         file_writer_path: Optional[str] = None,
     ):
+        super().__init__()
         self.file_reader_folder = file_reader_path or str(
             root_path / "outputs" / "images"
         )
@@ -26,16 +27,28 @@ class ImageProcessor(file_processor):
         self._extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png")
 
     async def read_file(self, filename: str, path: Optional[str] = None):
-        async with aiofiles.open(os.path.join(path or self.file_reader_folder, filename), "rb") as f:
+        log.info(
+            f"读图片接受参数: 文件名：{filename}, 路径: {path or self.file_reader_folder}"
+        )
+        async with aiofiles.open(
+            os.path.join(path or self.file_reader_folder, filename), "rb"
+        ) as f:
             image = await f.read()
+        log.info(f"读图片成功: 文件名：{filename}")
         return image
 
     async def write_file(
         self, filename: str, content: file_content, path: Optional[str] = None
     ) -> bool:
-        content = await self._get_bin(content)
-        async with aiofiles.open(os.path.join(path or self.file_writer_folder, filename), "wb") as f:
-            await f.write(content)
+        log.info(
+            f"写图片接受参数: 文件名：{filename}, 内容：{content if len(content) < 10 else content[:10]}, 类型: {type(content)}"
+        )
+        bin_content = await self._get_bin(content)
+        async with aiofiles.open(
+            os.path.join(path or self.file_writer_folder, filename), "wb"
+        ) as f:
+            await f.write(bin_content)
+        log.info(f"写图片成功: 文件名：{filename}")
         return True
 
     async def get_file_path(self, filename: str, path: Optional[str] = None) -> str:
@@ -45,15 +58,6 @@ class ImageProcessor(file_processor):
     def extensions(self) -> tuple[str, ...]:
         return self._extensions
 
-    async def _get_bin(self, content: file_content) -> bytes:
-        if isinstance(content, bytes):
-            return content
-        elif isinstance(content, str):
-            if content.startswith(("http://", "https://")):
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(content)
-                    response.raise_for_status()  # 检查请求是否成功
-                return response.content
-        raise ValueError(f"Unsupported content type: {type(content)}")
+
 
 image_processor = ImageProcessor()
