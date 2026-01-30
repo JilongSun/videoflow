@@ -1,14 +1,20 @@
 from videoflow.utils import log
-from tikhub import Client
 from ..file_processor import read_file, write_file
 from typing import Union, Optional
-import os, httpx, json, asyncio
+from tikhub_sdk_v2.rest import ApiException
+import os, httpx, json, asyncio, uuid, tikhub_sdk_v2
 
 
 class Crawler:
     def __init__(
         self,
     ):
+        """
+        初始化 douyin 爬虫工具
+        tikhub_sdk_v2改成了上下文打开方式
+        with self.tikhub_client(configuration) as api_client:
+            api_instance = tikhub_sdk_v2.TikTokAppV3APIApi(api_client)
+        """
         if api_key := os.getenv("TIKHUB_API_KEY", None):
             self.api_key = "Bearer " + api_key.strip()
         else:
@@ -16,8 +22,11 @@ class Crawler:
         self.base_url = "https://api.tikhub.io"
 
         log.info(f"爬虫工具初始化完成，API_KEY: {self.api_key}")
+        self.configuration = tikhub_sdk_v2.Configuration(host=self.base_url)
+        self.configuration.access_token = self.api_key
+        self.tikhub_client = tikhub_sdk_v2.ApiClient
 
-        self.tikhub_client = Client(api_key=self.api_key)
+
 
     async def search_video(
         self, target: str, publish_time: Optional[Union[int, str]] = "1"
@@ -46,11 +55,12 @@ class Crawler:
             response = await client.post(
                 url, json=payload, headers=headers, timeout=9999
             )
+        name = uuid.uuid4().hex[:4]
+        await write_file(f"{target}_{name}.json", response.content)
         log.info(f"搜索视频 {target} 完成，状态码: {response.status_code}")
         await asyncio.sleep(1)
         if response.status_code == 200:
             log.info(response.content)
-            await write_file("aaa.json", response.content)
             return response.content
         else:
             log.error(f"搜索视频 {target} 失败，状态码: {response.status_code}")
