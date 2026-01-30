@@ -30,7 +30,7 @@ class DocProcessor(file_processor):
         )
         os.makedirs(self.file_reader_folder, exist_ok=True)
         os.makedirs(self.file_writer_folder, exist_ok=True)
-        self._extensions: tuple[str, ...] = (".txt", ".docx")
+        self._extensions: tuple[str, ...] = (".txt", ".docx", ".json")
 
     async def read_file(self, filename: str, path: Optional[str] = None):
         log.info(
