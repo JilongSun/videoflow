@@ -13,5 +13,11 @@ dependencies = [
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
     "requests>=2.32.5",
+    "tikhub>=1.13.0",
     "uvicorn>=0.40.0",
+]
+
+[project.optional-dependencies]
+build = [
+    "nuitka>=2.8.10",
 ]

@@ -2,8 +2,8 @@ import os, aiofiles, httpx, base64
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import TypeVar, Awaitable, Any, Optional, Annotated
-from ...models.router_model import file_content
-from app.utils import log
+from app.models.router_model import file_content
+from videoflow.utils import log
 
 FP = TypeVar("FP", bound="file_processor")
 

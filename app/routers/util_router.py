@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
-from ..utils.file_processor import write_file, read_file, get_file_path
+from videoflow.utils.file_processor import write_file, read_file, get_file_path
 from ..models.router_model import WriteFileRequest, ReadFileRequest
-from app.utils import log
+from videoflow.utils import log
 
 __all__ = ["router"]
 
