@@ -258,7 +258,12 @@ class VideoDownloader:
 """
 
     def __init__(
-        self, download_path, use_description=False, skip_existing=True, max_workers=4
+        self,
+        download_path,
+        file_name: Optional[str] = None,
+        use_description=False,
+        skip_existing=True,
+        max_workers=4,
     ):
         """Initialize the downloader
 
@@ -269,6 +274,7 @@ class VideoDownloader:
             max_workers: Maximum number of parallel downloads
         """
         self.download_path = download_path
+        self.file_name = file_name
         self.use_description = use_description
         self.skip_existing = skip_existing
         self.max_workers = max_workers  # New parameter for parallel downloads
@@ -1323,19 +1329,23 @@ class VideoDownloader:
             return None
 
         try:
-            # Generate base filename
-            base_name = self._get_content_name(data)
-
-            # Add index if provided (for multi-file content)
-            if index is not None:
-                base_name = f"{base_name}_{index + 1:03d}"
-
-            # Add suffix if provided
-            if suffix:
-                base_name = f"{base_name}{suffix}"
-
             # Complete filename with extension
-            file_name = os.path.join(output_dir, f"{base_name}{extension}")
+            if self.file_name:
+                file_name = os.path.join(output_dir, self.file_name)
+                base_name = self.file_name
+            else:
+                # Generate base filename
+                base_name = self._get_content_name(data)
+
+                # Add index if provided (for multi-file content)
+                if index is not None:
+                    base_name = f"{base_name}_{index + 1:03d}"
+
+                # Add suffix if provided
+                if suffix:
+                    base_name = f"{base_name}{suffix}"
+
+                file_name = os.path.join(output_dir, f"{base_name}{extension}")
 
             # Skip if file exists and skip_existing is True
             if self.skip_existing and os.path.exists(file_name):

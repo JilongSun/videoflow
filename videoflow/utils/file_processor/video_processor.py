@@ -33,7 +33,7 @@ class VideoDownloaderTab:
         )
 
     async def _download_video(
-        self, url: str, download_path: str
+        self, url: str, download_path: str, file_name: Optional[str] = None
     ) -> Tuple[
         Annotated[bool, "是否成功"], Annotated[Union[str, None], "视频ID, 失败时为None"]
     ]:
@@ -52,6 +52,7 @@ class VideoDownloaderTab:
         log.info("Preparing to download video")
         downloader = VideoDownloader(
             download_path=download_path,
+            file_name=file_name,
             use_description=False,
             skip_existing=True,
             max_workers=4,
@@ -121,16 +122,22 @@ class VideoProcessor(file_processor):
         return self._extensions
 
     async def _video_download(
-        self, url: str, file_name: str, download_path: Optional[str] = None
+        self,
+        url: str,
+        file_name: Optional[str] = None,
+        download_path: Optional[str] = None,
     ):
 
         success, video_id = await self.video_downloader._download_video(
-            url, download_path or self.file_writer_folder + "/" + file_name
+            url, download_path or self.file_writer_folder, file_name
         )
         return success, video_id
 
     async def video_download(
-        self, url: str, file_name: str, download_path: Optional[str] = None
+        self,
+        url: str,
+        file_name: Optional[str] = None,
+        download_path: Optional[str] = None,
     ):
         success, video_id = await self._video_download(url, file_name, download_path)
         return success, video_id
