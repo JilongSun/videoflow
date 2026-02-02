@@ -121,7 +121,7 @@ class VideoProcessor(file_processor):
     def extensions(self) -> tuple[str, ...]:
         return self._extensions
 
-    async def _video_download(
+    async def video_download_fromweb(
         self,
         url: str,
         file_name: Optional[str] = None,
@@ -131,15 +131,6 @@ class VideoProcessor(file_processor):
         success, video_id = await self.video_downloader._download_video(
             url, download_path or self.file_writer_folder, file_name
         )
-        return success, video_id
-
-    async def video_download(
-        self,
-        url: str,
-        file_name: Optional[str] = None,
-        download_path: Optional[str] = None,
-    ):
-        success, video_id = await self._video_download(url, file_name, download_path)
         return success, video_id
 
 

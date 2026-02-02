@@ -1,5 +1,6 @@
 from videoflow.utils import log
 from ..file_processor import read_file, write_file
+from ..file_processor.video_processor import video_processor
 from typing import Union, Optional
 from tikhub_sdk_v2.rest import ApiException
 import os, httpx, json, asyncio, uuid, tikhub_sdk_v2
@@ -25,8 +26,6 @@ class Crawler:
         self.configuration = tikhub_sdk_v2.Configuration(host=self.base_url)
         self.configuration.access_token = self.api_key
         self.tikhub_client = tikhub_sdk_v2.ApiClient
-
-
 
     async def search_video(
         self, target: str, publish_time: Optional[Union[int, str]] = "1"
@@ -65,6 +64,19 @@ class Crawler:
         else:
             log.error(f"搜索视频 {target} 失败，状态码: {response.status_code}")
             return None
+
+    async def download_video(
+        self,
+        url: str,
+        file_name: Optional[str] = None,
+        download_path: Optional[str] = None,
+    ):
+        success, video_id = await video_processor.video_download_fromweb(
+            url,
+            file_name=file_name,
+            download_path=download_path,
+        )
+        return success, video_id
 
 
 crawler = Crawler()
