@@ -1,5 +1,6 @@
 import httpx
 from downloader.apis.api_client import MainAPIClient
+from typing import Optional
 
 
 class TikHubAPI:
@@ -15,7 +16,7 @@ class TikHubAPI:
         self.logger = self.main_client.logger
 
     # 获取TikHub用户信息/Get TikHub user information
-    def get_tikhub_user_info(self, api_key: str = None):
+    def get_tikhub_user_info(self, api_key: Optional[str] = None):
         """
         Get user information from the TikHub API
 
@@ -27,12 +28,14 @@ class TikHubAPI:
         with httpx.Client() as client:
             response = client.get(url, headers=headers, timeout=10)
             # 打印日志
-            self.logger.info(f"get_tikhub_user_info response code: {response.status_code}")
+            self.logger.info(
+                f"get_tikhub_user_info response code: {response.status_code}"
+            )
             response = response.json()
         return response
 
     # 获取用户每日使用情况/Get user daily usage
-    def get_user_daily_usage(self, api_key: str = None):
+    def get_user_daily_usage(self, api_key: Optional[str] = None):
         """
         Get daily usage information for the user
 
@@ -44,16 +47,19 @@ class TikHubAPI:
         with httpx.Client() as client:
             response = client.get(url, headers=headers, timeout=10)
             # 打印日志
-            self.logger.info(f"get_user_daily_usage response code: {response.status_code}")
+            self.logger.info(
+                f"get_user_daily_usage response code: {response.status_code}"
+            )
             response = response.json()
         return response
 
     # 计算价格/Calculate price
-    def calculate_price(self,
-                        api_key: str = None,
-                        endpoint: str = "/apis/v1/tiktok/app/v3/fetch_one_video",
-                        request_per_day: int = 100000
-                        ):
+    def calculate_price(
+        self,
+        api_key: Optional[str] = None,
+        endpoint: str = "/apis/v1/tiktok/app/v3/fetch_one_video",
+        request_per_day: int = 100000,
+    ):
         """
         Calculate the price for downloading videos
 
@@ -67,10 +73,7 @@ class TikHubAPI:
         """
         url = f"{self.main_client.base_url}/api/v1/tikhub/user/calculate_price"
         headers = self.main_client.get_headers(api_key)
-        params = {
-            "endpoint": endpoint,
-            "request_per_day": request_per_day
-        }
+        params = {"endpoint": endpoint, "request_per_day": request_per_day}
         with httpx.Client() as client:
             response = client.get(url, headers=headers, params=params, timeout=10)
             # 打印日志
@@ -79,7 +82,7 @@ class TikHubAPI:
         return response
 
     # 获取阶梯式折扣百分比信息/Get tiered discount percentage information
-    def get_tiered_discount_info(self, api_key: str = None):
+    def get_tiered_discount_info(self, api_key: Optional[str] = None):
         """
         Get tiered discount percentage information
 
@@ -91,16 +94,19 @@ class TikHubAPI:
         with httpx.Client() as client:
             response = client.get(url, headers=headers, timeout=10)
             # 打印日志
-            self.logger.info(f"get_tiered_discount_info response code: {response.status_code}")
+            self.logger.info(
+                f"get_tiered_discount_info response code: {response.status_code}"
+            )
             response = response.json()
 
         return response
 
     # 获取一个端点的信息/Get information of an endpoint
-    def get_endpoint_info(self,
-                          api_key: str = None,
-                          endpoint: str = "/apis/v1/tiktok/app/v3/fetch_one_video"
-                          ):
+    def get_endpoint_info(
+        self,
+        api_key: Optional[str] = None,
+        endpoint: str = "/apis/v1/tiktok/app/v3/fetch_one_video",
+    ):
         """
         Get information of an endpoint
 
@@ -113,9 +119,7 @@ class TikHubAPI:
         """
         url = f"{self.main_client.base_url}/api/v1/tikhub/user/get_endpoint_info"
         headers = self.main_client.get_headers(api_key)
-        params = {
-            "endpoint": endpoint
-        }
+        params = {"endpoint": endpoint}
         with httpx.Client() as client:
             response = client.get(url, headers=headers, params=params, timeout=10)
             # 打印日志
@@ -124,7 +128,7 @@ class TikHubAPI:
         return response
 
     # 获取所有端点信息/Get all endpoints information
-    def get_all_endpoints_info(self, api_key: str = None):
+    def get_all_endpoints_info(self, api_key: Optional[str] = None):
         """
         Get information of all endpoints
 
@@ -136,7 +140,9 @@ class TikHubAPI:
         with httpx.Client() as client:
             response = client.get(url, headers=headers, timeout=10)
             # 打印日志
-            self.logger.info(f"get_all_endpoints_info response code: {response.status_code}")
+            self.logger.info(
+                f"get_all_endpoints_info response code: {response.status_code}"
+            )
             response = response.json()
         return response
 

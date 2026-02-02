@@ -4,7 +4,7 @@ Configuration handling for TikHub Downloader
 
 import os
 import json
-from downloader.utils.logger import logger_instance
+from videoflow.utils.logger_config import log
 
 
 class Config:
@@ -17,7 +17,7 @@ class Config:
             config_file: Path to configuration file
         """
         # Set the logger
-        self.logger = logger_instance
+        self.logger = log
 
         # Set the configuration file path
         self.config_file = config_file
