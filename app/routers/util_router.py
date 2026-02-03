@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
-from ..models.router_model import WriteFileRequest, ReadFileRequest
+from videoflow.utils.crawlers.crawler import crawler
+from ..models.router_model import WriteFileRequest, ReadFileRequest, SearchVideoRequest
 from videoflow.utils import log
 
 __all__ = ["router"]
@@ -30,3 +31,15 @@ async def read_file_endpoint(
     log.info(f"读文件接口接受参数: 文件名：{request.file_name}, 路径：{request.path}")
     path = await get_file_path(request.file_name, request.path)
     return FileResponse(path, media_type="image/jpeg")
+
+
+@router.post("/search-video")
+async def search_video_endpoint(request: SearchVideoRequest):
+    log.info(
+        f"搜索视频接口接受参数: 关键词：{request.keyword}, 发布时间：{request.publish_time}"
+    )
+    res = await crawler.search_video(request.keyword, request.publish_time)
+    if res:
+        return {"message": "Video search success", "data": res}
+    else:
+        return {"message": "Video search failed", "data": None}

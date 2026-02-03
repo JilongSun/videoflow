@@ -17,3 +17,9 @@ class WriteFileRequest(BaseModel):
 class ReadFileRequest(BaseModel):
     file_name: str = Field(..., description="要读取的文件名")
     path: Optional[str] = Field(None, description="要读取的文件路径,非必须")
+
+class SearchVideoRequest(BaseModel):
+    keyword: str = Field(..., description="搜索关键词")
+    publish_time: Optional[Union[int, str]] = Field(
+        1, description="发布时间，1表示最近1天，7表示最近7天"
+    )

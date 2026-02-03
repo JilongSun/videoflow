@@ -1,6 +1,7 @@
 from videoflow.utils import log
 from ..file_processor import read_file, write_file
 from ..file_processor.video_processor import video_processor
+from .models import TkhubInfo
 from typing import Union, Optional
 from tikhub_sdk_v2.rest import ApiException
 import os, httpx, json, asyncio, uuid, tikhub_sdk_v2

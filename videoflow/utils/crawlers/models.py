@@ -4,23 +4,27 @@ from datetime import datetime
 
 
 class Author(BaseModel):
-    model_config = {"extra": "allow"}
+    nickname: str = Field(..., description="作者昵称")
+    model_config = {"extra": "ignore"}
 
 
 class Music(BaseModel):
-    model_config = {"extra": "allow"}
+    music_id: str = Field(..., description="音乐字符串ID")
+    model_config = {"extra": "ignore"}
 
 
 class Statistics(BaseModel):
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
 
 
 class VideoPlayAddr(BaseModel):
-    model_config = {"extra": "allow"}
+    uri: str = Field(..., description="视频播放地址")
+    model_config = {"extra": "ignore"}
 
 
 class Video(BaseModel):
-    model_config = {"extra": "allow"}
+    play_addr: VideoPlayAddr = Field(..., description="视频播放地址信息")
+    model_config = {"extra": "ignore"}
 
 
 class AwemeInfo(BaseModel):
@@ -31,18 +35,18 @@ class AwemeInfo(BaseModel):
     video: Video = Field(..., description="视频信息")
     share_url: str = Field(..., description="视频分享链接")
     statistics: Statistics = Field(..., description="视频统计信息")
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
 
 
 class Data2(BaseModel):
     type: int = Field(..., description="编号代表图像或者视频")
     aweme_info: List[AwemeInfo] = Field(..., description="视频信息")
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
 
 
 class Data1(BaseModel):
     data: List[Data2] = Field(..., description="返回核心数据")
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
 
 
 class TkhubInfo(BaseModel):
@@ -57,4 +61,4 @@ class TkhubInfo(BaseModel):
     params: Optional[Dict[str, Any]] = None
     data: Optional[Data1] = None
 
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "ignore"}
