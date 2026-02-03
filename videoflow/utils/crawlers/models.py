@@ -9,7 +9,7 @@ class Author(BaseModel):
 
 
 class Music(BaseModel):
-    music_id: str = Field(..., description="音乐字符串ID")
+    id_str: str = Field(..., description="音乐字符串ID")
     model_config = {"extra": "ignore"}
 
 
@@ -40,7 +40,7 @@ class AwemeInfo(BaseModel):
 
 class Data2(BaseModel):
     type: int = Field(..., description="编号代表图像或者视频")
-    aweme_info: List[AwemeInfo] = Field(..., description="视频信息")
+    aweme_info: Optional[AwemeInfo] = Field(None, description="视频信息")
     model_config = {"extra": "ignore"}
 
 

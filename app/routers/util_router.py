@@ -38,8 +38,8 @@ async def search_video_endpoint(request: SearchVideoRequest):
     log.info(
         f"搜索视频接口接受参数: 关键词：{request.keyword}, 发布时间：{request.publish_time}"
     )
-    res = await crawler.search_video(request.keyword, request.publish_time)
-    if res:
-        return {"message": "Video search success", "data": res}
+    path = await crawler.search_video(request.keyword, request.publish_time)
+    if path:
+        return {"message": "Video search success", "path": path}
     else:
-        return {"message": "Video search failed", "data": None}
+        return {"message": "Video search failed", "path": None}

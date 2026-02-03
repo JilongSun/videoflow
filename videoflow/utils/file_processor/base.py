@@ -44,7 +44,7 @@ class file_processor(ABC):
     async def _get_bin(self, content: file_content | bytes) -> bytes:
         """
         将文件内容转换为二进制数据,
-        支持URL和base64编码后的内容
+        支持URL和n8n的filesystem-v2
         """
         if isinstance(content, bytes):
             return content
@@ -60,7 +60,6 @@ class file_processor(ABC):
                 async with aiofiles.open(str(target_path), 'rb') as f:
                     return await f.read()
             else:
-                # 提取base64编码部分
-                base64_str = base64.b64decode(content)
-                return base64.b64decode(base64_str)
+                # 将字符串转换成二进制数据
+                return content.encode('utf-8')
         raise ValueError(f"Unsupported content type: {type(content)}")

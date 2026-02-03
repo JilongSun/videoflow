@@ -1,8 +1,8 @@
 from videoflow.utils import log
-from ..file_processor import read_file, write_file
+from ..file_processor import read_file, write_file, get_file_path
 from ..file_processor.video_processor import video_processor
 from .models import TkhubInfo
-from typing import Union, Optional
+from typing import Union, Optional, Annotated
 from tikhub_sdk_v2.rest import ApiException
 import os, httpx, json, asyncio, uuid, tikhub_sdk_v2
 
@@ -30,7 +30,9 @@ class Crawler:
 
     async def search_video(
         self, target: str, publish_time: Optional[Union[int, str]] = "1"
-    ):
+    ) -> Optional[
+        Annotated[str, "爬取的文件信息保存路径, 包含文件名，爬取失败返回None"]
+    ]:
         if isinstance(publish_time, int):
             publish_time = str(publish_time)
         endpoint = "/api/v1/douyin/search/fetch_video_search_v1"
@@ -56,12 +58,15 @@ class Crawler:
                 url, json=payload, headers=headers, timeout=9999
             )
         name = uuid.uuid4().hex[:4]
-        await write_file(f"{target}_{name}.json", response.content)
         log.info(f"搜索视频 {target} 完成，状态码: {response.status_code}")
         await asyncio.sleep(1)
         if response.status_code == 200:
-            log.info(response.content)
-            return response.content
+            temp = response.json()
+            tkhun_info = TkhubInfo(**temp)
+            await write_file(f"{target}_{name}.json", tkhun_info.model_dump_json())
+            log.info(tkhun_info)
+            path = await get_file_path(f"{target}_{name}.json")
+            return path
         else:
             log.error(f"搜索视频 {target} 失败，状态码: {response.status_code}")
             return None
