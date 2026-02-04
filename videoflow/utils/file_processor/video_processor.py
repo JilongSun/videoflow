@@ -5,7 +5,7 @@ from app.models.router_model import file_content
 from videoflow.utils.logger_config import log
 from downloader.apis.api_client import MainAPIClient
 from downloader.core.downloader import VideoDownloader
-import os, aiofiles, httpx, base64, asyncio
+import os, aiofiles, httpx, base64, asyncio, ffmpeg
 
 __all__ = ["video_processor"]
 
@@ -132,6 +132,25 @@ class VideoProcessor(file_processor):
             url, download_path or self.file_writer_folder, file_name
         )
         return success, video_id
+
+    async def split_video(self, video_id: str, **kwargs):
+        video_path = await self.get_file_path(video_id)
+        arg = list(map(lambda x: str(x), kwargs.values()))
+        out = video_path.replace(".mp4", f"_{'_'.join(arg)}.mp4")
+        res = await asyncio.to_thread(ffmpeg.input, video_path)
+        res = await asyncio.to_thread(
+            res.trim,
+            **kwargs,
+        )
+        res = await asyncio.to_thread(
+            res.output,
+            out,
+        )
+        res = await asyncio.to_thread(
+            res.overwrite_output,
+        )
+        res = res.run_async
+        return video_id.replace(video_id[-4:], f"_{'_'.join(arg)}{video_id[-4:]}")
 
 
 video_processor = VideoProcessor()
