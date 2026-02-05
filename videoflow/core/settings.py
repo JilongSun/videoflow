@@ -4,7 +4,7 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
 )
 from pydantic import Field
-from typing import Optional, List, Annotated, Any
+from typing import Optional, List, Annotated, Any, Dict
 from videoflow.utils import log
 import os
 
@@ -43,6 +43,7 @@ class PlatformConfig(MySettings):
     timeout: Optional[Annotated[int, Field(description="API 请求超时时间（秒）")]] = 300
     retries: Optional[Annotated[int, Field(description="API 请求重试次数")]] = 3
 
+    if_taskid: bool = Field(..., description="ai第三方是否是返回任务ID")
 
     def model_post_init(self, __context: Any) -> None:
         """
@@ -66,10 +67,49 @@ class PlatformConfig(MySettings):
     def _check_platform(self):
         if self.platform_name == "ait8":
             self._process_ait8()
+        elif self.platform_name == "dashscope":
+            self._process_dashscope()
 
     def _process_ait8(self):
-        self.base_url = "https://api.ait8.com"
+        self.base_url = "https://ai.t8star.cn"
+
+    def _process_dashscope(self):
+        self.base_url = "https://dashscope.aliyuncs.com/api/v1"
+
+
+class ModelSettings(PlatformConfig):
+    model_name: str = Field(..., description="模型名称")
+    body: Dict[str, Any] = Field(..., description="模型请求体")
+    end_point: str = Field(..., description="API 路由")
 
 
 # 创建全局配置实例
-config = PlatformConfig(platform_name="ait8")
+runway_ait8 = ModelSettings(
+    platform_name="ait8",
+    if_taskid=True,
+    model_name="runway-aleph",
+    body={
+        "video": "string",
+        "prompt": "string",
+        "images": ["string"],
+        "options": {"seconds": 0},
+    },
+    end_point="/runway/v1/pro/aleph",
+)
+
+wanx_dashscpoe = ModelSettings(
+    platform_name="dashscope",
+    if_taskid=True,
+    model_name="wanx2.1-vace-plus",
+    body={
+        "model": "str",
+        "function": "str",
+        "video": "url",
+        "prompt": "url",
+        "images": ["url"],
+        "options": {"seconds": 0},
+    },
+    end_point="services/aigc/video-generation/video-synthesis",
+)
+
+__all__ = ["runway_ait8", "wanx_dashscpoe"]

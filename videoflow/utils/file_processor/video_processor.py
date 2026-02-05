@@ -96,9 +96,9 @@ class VideoProcessor(file_processor):
         async with aiofiles.open(
             os.path.join(path or self.file_reader_folder, filename), "rb"
         ) as f:
-            image = await f.read()
+            res = await f.read()
         log.info(f"读图片成功: 文件名：{filename}")
-        return image
+        return res
 
     async def write_file(
         self, filename: str, content: file_content, path: Optional[str] = None
@@ -137,19 +137,16 @@ class VideoProcessor(file_processor):
         video_path = await self.get_file_path(video_id)
         arg = list(map(lambda x: str(x), kwargs.values()))
         out = video_path.replace(".mp4", f"_{'_'.join(arg)}.mp4")
-        res = await asyncio.to_thread(ffmpeg.input, video_path)
-        res = await asyncio.to_thread(
-            res.trim,
-            **kwargs,
-        )
-        res = await asyncio.to_thread(
-            res.output,
-            out,
-        )
-        res = await asyncio.to_thread(
-            res.overwrite_output,
-        )
-        res = res.run_async
+        def func():
+            (
+                ffmpeg.input(video_path)
+                .trim(**kwargs)
+                .output(out)
+                .overwrite_output()
+                .run()
+            )
+
+        await asyncio.to_thread(func)
         return video_id.replace(video_id[-4:], f"_{'_'.join(arg)}{video_id[-4:]}")
 
 
