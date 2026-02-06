@@ -44,6 +44,9 @@ class PlatformConfig(MySettings):
     retries: Optional[Annotated[int, Field(description="API 请求重试次数")]] = 3
 
     if_taskid: bool = Field(..., description="ai第三方是否是返回任务ID")
+    status: Optional[set] = Field(
+        None, description="如果是taskid的形式，就必须有任务状态"
+    )
 
     def model_post_init(self, __context: Any) -> None:
         """
@@ -62,6 +65,9 @@ class PlatformConfig(MySettings):
             # 如果没有找到，保持原有的 api_key 值或给出警告
             log.error(f"⚠️  未找到环境变量 {env_api_key_name}，使用默认 API key")
             raise ValueError(f"未找到环境变量 {env_api_key_name}，请在 .env 文件中配置")
+        if self.if_taskid and not self.status:
+            raise ValueError("如果是taskid的形式，就必须有任务状态")
+
         self._check_platform()
 
     def _check_platform(self):
@@ -88,6 +94,14 @@ runway_ait8 = ModelSettings(
     if_taskid=True,
     model_name="runway-aleph",
     end_point="/runway/v1/pro/aleph",
+    status={
+        "PENDING",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELED",
+        "UNKNOWN",
+    },
 )
 
 wanx_dashscpoe = ModelSettings(
@@ -95,6 +109,14 @@ wanx_dashscpoe = ModelSettings(
     if_taskid=True,
     model_name="wanx2.1-vace-plus",
     end_point="/services/aigc/video-generation/video-synthesis",
+    status={
+        "PENDING",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELED",
+        "UNKNOWN",
+    },
 )
 
 __all__ = ["runway_ait8", "wanx_dashscpoe"]
