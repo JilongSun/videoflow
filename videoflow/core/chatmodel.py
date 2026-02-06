@@ -1,5 +1,3 @@
-import json
-
 from langchain_core.callbacks import (
     CallbackManagerForLLMRun,
     AsyncCallbackManagerForLLMRun,
@@ -13,11 +11,15 @@ from pydantic import Field, BaseModel
 from typing import Optional, Annotated, Dict, Any, List, Union, Tuple
 from .settings import runway_ait8, wanx_dashscpoe
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
-from videoflow.utils.file_processor import video_processor, image_processor
+from videoflow.utils.file_processor import (
+    video_processor,
+    image_processor,
+    file_processor_provider,
+)
 from dashscope import ImageSynthesis
 from videoflow.utils import log
 from abc import ABC, abstractmethod
-import httpx, dashscope, os, aiofiles
+import httpx, dashscope, os, aiofiles, json
 
 
 class VideoEditBase(BaseChatModel, ABC):
@@ -93,7 +95,7 @@ class VideoEditBase(BaseChatModel, ABC):
         if not api_key:
             log.error("AIT8_API_KEY 环境变量未配置")
             raise ValueError("AIT8_API_KEY 环境变量未配置")
-        path = await self.get_file_path(file_name)
+        path = await get_file_path(file_name)
 
         # 使用异步文件操作
         async with aiofiles.open(path, "rb") as f:
