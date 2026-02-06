@@ -3,7 +3,7 @@ from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
 )
 from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.outputs import ChatResult
+from langchain_core.outputs import ChatResult, Generation, ChatGeneration
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, BaseMessage
@@ -131,7 +131,7 @@ class VideoEditBase(BaseChatModel, ABC):
 
 
 class WanxDashscope(VideoEditBase):
-    async def ainvoke(
+    async def ainvoke( # type: ignore
         self,
         image: List[str],
         video: str,
@@ -195,12 +195,15 @@ class WanxDashscope(VideoEditBase):
         log.info(f"response.status_code: {response.status_code}")
         log.info(f"response.content: {response.content}")
         res: dict = response.json()
+        task_id = None
         if self.if_taskid:
             task_id = res["output"]["task_id"]
             log.info(f"task_id: {task_id}")
-            await self._wait_for_task_completion(task_id)
+            # await self._wait_for_task_completion(task_id)
 
-        return res
+        return ChatResult(
+            generations=[ChatGeneration(message=BaseMessage(content=task_id if task_id else "error", type="video_edit"))]
+        )
 
     async def _get_task_result(self, task_id: str) -> Annotated[bool, "是否完成"]:
         url = self.base_url + "/tasks" + f"/{task_id}"
@@ -224,6 +227,9 @@ class WanxDashscope(VideoEditBase):
 
 
 class RunwayAit8(BaseModel):
+    """
+    ait8的runway模型暂时弃用，api调用似乎有问题，并且还需要接入langchain
+    """
     model_name: str = Field(..., description="模型名称")
     platform_name: str = Field(..., description="平台名称")
     base_url: str = Field(..., description="API 基础 URL")
