@@ -2,6 +2,7 @@ from langchain_core.callbacks import (
     CallbackManagerForLLMRun,
     AsyncCallbackManagerForLLMRun,
 )
+from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.outputs import ChatResult
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
@@ -15,6 +16,11 @@ from videoflow.utils.file_processor import (
     video_processor,
     image_processor,
     file_processor_provider,
+)
+from langchain_core.language_models.base import (
+    BaseLanguageModel,
+    LangSmithParams,
+    LanguageModelInput,
 )
 from dashscope import ImageSynthesis
 from videoflow.utils import log
@@ -124,7 +130,24 @@ class VideoEditBase(BaseChatModel, ABC):
             raise Exception(f"获取文件url失败: {res.status_code} {res.content}")
 
 
-class WanxDashscope_1(VideoEditBase):
+class WanxDashscope(VideoEditBase):
+    async def ainvoke(
+        self,
+        image: List[str],
+        video: str,
+        mask_image: str,
+        config: RunnableConfig | None = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ):
+        temp_dic = {
+            "image": image,
+            "video": video,
+            "mask_image": mask_image,
+        }
+        return await super().ainvoke(json.dumps(temp_dic), config, stop=stop, **kwargs)
+
     async def _agenerate(
         self,
         messages: list[BaseMessage],
@@ -239,4 +262,4 @@ class RunwayAit8(BaseModel):
 
 runway = RunwayAit8(**runway_ait8.model_dump())
 
-wanx = WanxDashscope_1(**wanx_dashscpoe.model_dump())
+wanx = WanxDashscope(**wanx_dashscpoe.model_dump())
