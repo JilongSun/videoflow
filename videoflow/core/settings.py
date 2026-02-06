@@ -79,7 +79,6 @@ class PlatformConfig(MySettings):
 
 class ModelSettings(PlatformConfig):
     model_name: str = Field(..., description="模型名称")
-    body: Dict[str, Any] = Field(..., description="模型请求体")
     end_point: str = Field(..., description="API 路由")
 
 
@@ -88,12 +87,6 @@ runway_ait8 = ModelSettings(
     platform_name="ait8",
     if_taskid=True,
     model_name="runway-aleph",
-    body={
-        "video": "string",
-        "prompt": "string",
-        "images": ["string"],
-        "options": {"seconds": 0},
-    },
     end_point="/runway/v1/pro/aleph",
 )
 
@@ -101,15 +94,7 @@ wanx_dashscpoe = ModelSettings(
     platform_name="dashscope",
     if_taskid=True,
     model_name="wanx2.1-vace-plus",
-    body={
-        "model": "str",
-        "function": "str",
-        "video": "url",
-        "prompt": "url",
-        "images": ["url"],
-        "options": {"seconds": 0},
-    },
-    end_point="services/aigc/video-generation/video-synthesis",
+    end_point="/services/aigc/video-generation/video-synthesis",
 )
 
 __all__ = ["runway_ait8", "wanx_dashscpoe"]
