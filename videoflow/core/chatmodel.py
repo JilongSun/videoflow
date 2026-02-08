@@ -9,8 +9,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, BaseMessage
 from langchain_core.runnables import Runnable
 from pydantic import Field, BaseModel
-from typing import Optional, Annotated, Dict, Any, List, Union, Tuple
-from .settings import runway_ait8, wanx_dashscpoe
+from typing import Optional, Annotated, Dict, Any, List, Union, Tuple, cast
+from .settings import runway_ait8, wanx_dashscpoe, gen4aleph_runway, ModelSettings
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
 from videoflow.utils.file_processor import (
     video_processor,
@@ -22,24 +22,26 @@ from langchain_core.language_models.base import (
     LangSmithParams,
     LanguageModelInput,
 )
-from dashscope import ImageSynthesis
+
 from videoflow.utils import log
 from abc import ABC, abstractmethod
-import httpx, dashscope, os, aiofiles, json
+from runwayml import RunwayML
+from pathlib import Path
+import httpx, os, aiofiles, json, asyncio
 
 
-class VideoEditBase(BaseChatModel, ABC):
-    model_name: str = Field(..., description="模型名称")
-    platform_name: str = Field(..., description="平台名称")
-    base_url: str = Field(..., description="API 基础 URL")
-    api_key: str = Field(..., description="API 密钥")  # 动态获取
-    timeout: Optional[Annotated[int, Field(description="API 请求超时时间（秒）")]] = 300
-    retries: Optional[Annotated[int, Field(description="API 请求重试次数")]] = 3
-    if_taskid: bool = Field(True, description="ai第三方是否是返回任务ID")
-    end_point: str = Field(..., description="API 路由")
-    status: Optional[set] = Field(
-        ..., description="如果是taskid的形式，就必须有任务状态"
-    )
+class VideoEditBase(BaseChatModel, ModelSettings, ABC):
+    # model_name: str = Field(..., description="模型名称")
+    # platform_name: str = Field(..., description="平台名称")
+    # base_url: str = Field(..., description="API 基础 URL")
+    # api_key: str = Field(..., description="API 密钥")  # 动态获取
+    # timeout: Optional[Annotated[int, Field(description="API 请求超时时间（秒）")]] = 300
+    # retries: Optional[Annotated[int, Field(description="API 请求重试次数")]] = 3
+    # if_taskid: bool = Field(True, description="ai第三方是否是返回任务ID")
+    # end_point: str = Field(..., description="API 路由")
+    # status: Optional[set] = Field(
+    #     ..., description="如果是taskid的形式，就必须有任务状态"
+    # )
 
     def _generate(
         self,
@@ -131,11 +133,15 @@ class VideoEditBase(BaseChatModel, ABC):
 
 
 class WanxDashscope(VideoEditBase):
-    async def ainvoke( # type: ignore
+    """
+    废弃不用
+    """
+
+    async def ainvoke(  # type: ignore
         self,
         image: List[str],
         video: str,
-        mask_image: str,
+        mask_image: Optional[str] = None,
         config: RunnableConfig | None = None,
         *,
         stop: list[str] | None = None,
@@ -155,35 +161,37 @@ class WanxDashscope(VideoEditBase):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        # temp = json.loads(messages[-1].content)
-        # image: List[str] = temp["image"]
-        # video: str = temp["video"]
-        # mask_image: str = temp["mask_image"]
-        # image_url = await self._get_urls(image)
-        # video_url = await self._get_urls(video)
-        # mask_image_url = await self._get_urls(mask_image)
-        image_url = [
-            "https://files.closeai.fans/filesystem/uploads/54826/40a317576e75460e94cde709b9999e50/black_cat.webp"
-        ]
-        video_url = "https://files.closeai.fans/filesystem/uploads/54826/abb0f2dccbd54db9a73f25dd50450bdf/test_0_3.mp4"
-        mask_image_url = "https://files.closeai.fans/filesystem/uploads/54826/82550662ea0e4bc3a81fdd3791c5278e/white_test.jpg"
-        url = self.base_url + self.end_point
+        temp = json.loads(cast(str, messages[-1].content))
+        image: List[str] = temp["image"]
+        video: str = temp["video"]
+        mask_image: str = temp["mask_image"]
+        image_url = await self._get_urls(image)
+        video_url = await self._get_urls(video)
+        mask_image_url = await self._get_urls(mask_image)
+        url = self.base_url + self.end_point  # type: ignore
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "X-DashScope-Async": "enable",
         }
+        # todo: 这里的prompt需要根据实际的需求来修改
+        # todo: 还需要测试参考图像和obj
         input = {
-            "prompt": "按照图片替换视频中的猫",
+            "prompt": "将猫替换成黑猫,只需要做单纯的猫的替换，不要添加任何其他的元素，注意一定要显示风格的！",
             "function": "video_edit",
             "video_url": video_url,
-            "ref_images_url": image_url,
+            # "ref_images_url": image_url,
             "mask_image_url": mask_image_url,
+            "mask_frame_id": 1,
             "options": {"seconds": 5},
+        }
+        parameters = {
+            "obj_or_bg ": ["obj"],
         }
         request_body = {
             "model": self.model_name,
             "input": input,
+            # "parameters": parameters,
         }
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -202,11 +210,17 @@ class WanxDashscope(VideoEditBase):
             # await self._wait_for_task_completion(task_id)
 
         return ChatResult(
-            generations=[ChatGeneration(message=BaseMessage(content=task_id if task_id else "error", type="video_edit"))]
+            generations=[
+                ChatGeneration(
+                    message=BaseMessage(
+                        content=task_id if task_id else "error", type="video_edit,wanx"
+                    )
+                )
+            ]
         )
 
     async def _get_task_result(self, task_id: str) -> Annotated[bool, "是否完成"]:
-        url = self.base_url + "/tasks" + f"/{task_id}"
+        url = self.base_url + "/tasks" + f"/{task_id}"  # type: ignore
         headers = {
             "Authorization": f"Bearer {self.api_key}",
         }
@@ -226,10 +240,93 @@ class WanxDashscope(VideoEditBase):
             return res
 
 
+class Gen4AlephRunway(VideoEditBase):
+    """
+    runway的gen4_aleph模型
+    """
+
+    async def ainvoke(  # type: ignore
+        self,
+        image: List[str],
+        video: str,
+        mask_image: Optional[str] = None,
+        config: RunnableConfig | None = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ):
+        temp_dic = {
+            "image": image,
+            "video": video,
+            "mask_image": mask_image,
+        }
+        return await super().ainvoke(json.dumps(temp_dic), config, stop=stop, **kwargs)
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        temp = json.loads(cast(str, messages[-1].content))
+        image: List[str] = temp["image"]
+        video: str = temp["video"]
+        image_url = await self._get_urls(image)
+        video_url = await self._get_urls(video)
+        input = {
+            "model": self.model_name,
+            "video_uri": video_url,
+            "prompt_text": "Replace the cat in the video with the cat in the picture",
+            "references": [
+                {
+                    "type": "image",
+                    "uri": image_url[0],
+                }
+            ],
+            "extra_headers": {"Content-Type": "application/json"},
+        }
+        self.client: RunwayML
+
+        def gen():
+            log.info(f"input: {input},开始调用genaleph模型")
+            res = self.client.video_to_video.create(**input).wait_for_task_output()
+            return res
+
+        task = await asyncio.to_thread(gen)
+        if task is None:
+            raise ValueError("task is None")
+        elif task.status == "SUCCEEDED":
+            res = task.output[0]
+            log.info(f"genaleph模型返回结果: {res}")
+            return ChatResult(
+                generations=[
+                    ChatGeneration(
+                        message=BaseMessage(content=res, type="video_edit,genaleph")
+                    )
+                ]
+            )
+        else:
+            raise ValueError(f"task status is Failed")
+
+    async def _get_url(self, file_name: str) -> str:
+        """
+        如果使用runway就是用他们自家的临时uri储存
+        """
+        if file_name.startswith("runway://"):
+            return file_name
+        elif file_name.startswith(("http", "https")):
+            raise ValueError("runway模型只支持runway://开头的uri")
+        file = await get_file_path(file_name)
+        response = self.client.uploads.create_ephemeral(file=Path(file))
+        return response.uri
+
+
 class RunwayAit8(BaseModel):
     """
     ait8的runway模型暂时弃用，api调用似乎有问题，并且还需要接入langchain
     """
+
     model_name: str = Field(..., description="模型名称")
     platform_name: str = Field(..., description="平台名称")
     base_url: str = Field(..., description="API 基础 URL")
@@ -269,3 +366,5 @@ class RunwayAit8(BaseModel):
 runway = RunwayAit8(**runway_ait8.model_dump())
 
 wanx = WanxDashscope(**wanx_dashscpoe.model_dump())
+
+gen4aleph = Gen4AlephRunway(**gen4aleph_runway.model_dump())

@@ -4,8 +4,9 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
 )
 from pydantic import Field
-from typing import Optional, List, Annotated, Any, Dict
+from typing import Optional, List, Annotated, Any, Dict, Union
 from videoflow.utils import log
+from runwayml import RunwayML
 import os
 
 
@@ -44,9 +45,8 @@ class PlatformConfig(MySettings):
     retries: Optional[Annotated[int, Field(description="API 请求重试次数")]] = 3
 
     if_taskid: bool = Field(..., description="ai第三方是否是返回任务ID")
-    status: Optional[set] = Field(
-        None, description="如果是taskid的形式，就必须有任务状态"
-    )
+    status: Optional[set] = None  # 如果是taskid的形式，就必须有任务状态
+    client: Optional[Any] = None  # 如果使用第三方sdk，就需要传入client
 
     def model_post_init(self, __context: Any) -> None:
         """
@@ -75,12 +75,20 @@ class PlatformConfig(MySettings):
             self._process_ait8()
         elif self.platform_name == "dashscope":
             self._process_dashscope()
+        elif self.platform_name == "runway":
+            self._process_runway()
+        else:
+            raise ValueError(f"不支持的平台: {self.platform_name}")
 
     def _process_ait8(self):
         self.base_url = "https://ai.t8star.cn"
 
     def _process_dashscope(self):
         self.base_url = "https://dashscope.aliyuncs.com/api/v1"
+
+    def _process_runway(self):
+        self.base_url = "https://api.dev.runwayml.com"
+        self.client = RunwayML(api_key=self.api_key)
 
 
 class ModelSettings(PlatformConfig):
@@ -119,4 +127,11 @@ wanx_dashscpoe = ModelSettings(
     },
 )
 
-__all__ = ["runway_ait8", "wanx_dashscpoe"]
+gen4aleph_runway = ModelSettings(
+    platform_name="runway",
+    if_taskid=False,
+    model_name="gen4_aleph",
+    end_point="/v1/video-to-video",
+)
+
+__all__ = ["runway_ait8", "wanx_dashscpoe", "gen4aleph_runway", "ModelSettings"]
