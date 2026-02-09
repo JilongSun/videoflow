@@ -134,7 +134,7 @@ class VideoEditBase(BaseChatModel, ModelSettings, ABC):
 
 class WanxDashscope(VideoEditBase):
     """
-    废弃不用
+    阿里的wanx2.1-vace模型，废弃不用
     """
 
     async def ainvoke(  # type: ignore
