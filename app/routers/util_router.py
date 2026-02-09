@@ -50,7 +50,7 @@ async def search_video_endpoint(request: SearchVideoRequest):
         return {"message": "Video search failed", "path": None}
 
 
-@router.post("/upload-file")
+@router.post("/upload-file", deprecated=True)
 async def upload_file_endpoint(request: ReadFileRequest):
     """
     通过ait8上传文件然后获得url
