@@ -84,11 +84,16 @@ class PlatformConfig(MySettings):
         self.base_url = "https://ai.t8star.cn"
 
     def _process_dashscope(self):
-        self.base_url = "https://dashscope.aliyuncs.com/api/v1"
+        if self.base_url is None:
+            self.base_url = "https://dashscope.aliyuncs.com/api/v1"
+        else:
+            if self.api_key is None:
+                raise ValueError("如dashscopeapi_key没有正确设置")
+
 
     def _process_runway(self):
         self.base_url = "https://api.dev.runwayml.com"
-        self.client = RunwayML(api_key=self.api_key)
+        
 
 
 class ModelSettings(PlatformConfig):
@@ -134,4 +139,18 @@ gen4aleph_runway = ModelSettings(
     end_point="/v1/video-to-video",
 )
 
-__all__ = ["runway_ait8", "wanx_dashscpoe", "gen4aleph_runway", "ModelSettings"]
+qwen_dashscope = ModelSettings(
+    platform_name="dashscope",
+    if_taskid=False,
+    model_name="qwen-plus",
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    end_point="使用openai兼容格式不需要end_point",
+)
+
+__all__ = [
+    "runway_ait8",
+    "wanx_dashscpoe",
+    "gen4aleph_runway",
+    "qwen_dashscope",
+    "ModelSettings",
+]

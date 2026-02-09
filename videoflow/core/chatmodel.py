@@ -6,11 +6,17 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.outputs import ChatResult, Generation, ChatGeneration
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, BaseMessage
+from langchain_core.messages import HumanMessage, BaseMessage, AIMessage
 from langchain_core.runnables import Runnable
 from pydantic import Field, BaseModel
 from typing import Optional, Annotated, Dict, Any, List, Union, Tuple, cast
-from .settings import runway_ait8, wanx_dashscpoe, gen4aleph_runway, ModelSettings
+from .settings import (
+    runway_ait8,
+    wanx_dashscpoe,
+    gen4aleph_runway,
+    qwen_dashscope,
+    ModelSettings,
+)
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
 from videoflow.utils.file_processor import (
     video_processor,
@@ -245,6 +251,9 @@ class Gen4AlephRunway(VideoEditBase):
     runway的gen4_aleph模型
     """
 
+    def model_post_init(self, __context: Any) -> None:
+        self.client = RunwayML(api_key=self.api_key)
+
     async def ainvoke(  # type: ignore
         self,
         image: List[str],
@@ -363,8 +372,39 @@ class RunwayAit8(BaseModel):
         print(response.content)
 
 
+class QwenDashscopeChat(VideoEditBase):
+    def model_post_init(self, __context: Any) -> None:
+        self.client: ChatOpenAI = ChatOpenAI(
+            model=self.model_name,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=self.timeout,
+        )
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult: ...
+
+    async def ainvoke(
+        self,
+        input: LanguageModelInput,
+        config: RunnableConfig | None = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> AIMessage:
+        res = await self.client.ainvoke(input)
+        return res
+
+
 runway = RunwayAit8(**runway_ait8.model_dump())
 
 wanx = WanxDashscope(**wanx_dashscpoe.model_dump())
 
 gen4aleph = Gen4AlephRunway(**gen4aleph_runway.model_dump())
+
+qwendashchat = QwenDashscopeChat(**qwen_dashscope.model_dump())
