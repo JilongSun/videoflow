@@ -35,6 +35,13 @@ from runwayml import RunwayML
 from pathlib import Path
 import httpx, os, aiofiles, json, asyncio
 
+__all__ = [
+    "gen4aleph",
+    "qwendashchat",
+    "runway",
+    "wanx",
+]
+
 
 class VideoEditBase(BaseChatModel, ModelSettings, ABC):
     # model_name: str = Field(..., description="模型名称")
@@ -377,7 +384,7 @@ class QwenDashscopeChat(VideoEditBase):
         self.client: ChatOpenAI = ChatOpenAI(
             model=self.model_name,
             base_url=self.base_url,
-            api_key=self.api_key,
+            api_key=self.api_key,  # type: ignore
             timeout=self.timeout,
         )
 

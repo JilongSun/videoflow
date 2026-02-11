@@ -99,6 +99,7 @@ class PlatformConfig(MySettings):
 class ModelSettings(PlatformConfig):
     model_name: str = Field(..., description="模型名称")
     end_point: str = Field(..., description="API 路由")
+    prompt: Annotated[Optional[str], Field(None, description="不同模型需要不同的提示词，这直接关系到输入")] = None
 
 
 # 创建全局配置实例

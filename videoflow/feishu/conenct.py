@@ -10,22 +10,39 @@ from lark_oapi.api.im.v1 import (
     ReplyMessageRequest,
     P2ImMessageReceiveV1,
     ReplyMessageRequestBody,
-)  # type: ignore
+)
+from typing import Literal, Annotated, Union, Any
 import json
+
+messagetype = Union[
+    Literal["text"], Literal["post"]
+]  # 消息类型，text 纯文本或 post 富文本，目前用户发送一张图片必然是富文本，因为有空格
 
 
 # 注册接收消息事件，处理接收到的消息。
 # Register event handler to handle received messages.
 # https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/events/receive
 def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
-    res_content = ""
-    if data.event.message.message_type == "text":  # type: ignore
-        res_content = json.loads(data.event.message.content)["text"]  # type: ignore
+    message_type: messagetype = data.event.message.message_type  # type: ignore
+    if message_type == "text":
+        temp = json.loads(data.event.message.content)["text"]  # type: ignore
+        content = [temp]
+    elif message_type == "post":
+        temp: list[dict] = json.loads(data.event.message.content)["content"]  # type: ignore
+        image_key = []
+        chat = ""
+        for item in temp:
+            for subitem in item:
+                if subitem["tag"] == "img":
+                    image_key.append(subitem["image_key"])
+                elif subitem["tag"] == "text":
+                    chat += subitem["text"]
+        content = [chat, image_key]
     else:
-        res_content = "解析消息失败，请发送文本消息\nparse message failed, please send text message"
+        content = "解析消息失败，请发送文本消息\nparse message failed, please send text message"
 
-    content = json.dumps(
-        {"text": f"收到你发送的消息：{res_content}\nReceived message:{res_content}"}
+    send = json.dumps(
+        {"text": f"已收到消息，正在交给大模型处理"}
     )
 
     if data.event.message.chat_type == "p2p":  # type: ignore
@@ -36,7 +53,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
                 CreateMessageRequestBody.builder()
                 .receive_id(data.event.message.chat_id)  # type: ignore
                 .msg_type("text")
-                .content(content)
+                .content(send)
                 .build()
             )
             .build()
@@ -55,10 +72,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             ReplyMessageRequest.builder()
             .message_id(data.event.message.message_id)  # type: ignore
             .request_body(
-                ReplyMessageRequestBody.builder()
-                .content(content)
-                .msg_type("text")
-                .build()
+                ReplyMessageRequestBody.builder().content(send).msg_type("text").build()
             )
             .build()
         )
@@ -97,12 +111,14 @@ def main():
     #  Start long connection and register event handler.
     wsClient.start()
 
+
 async def amain():
     async def inner():
         await asyncio.to_thread(main)
+
     asyncio.create_task(inner())
 
 
 if __name__ == "__main__":
-    # main()
-    asyncio.run(amain())
+    main()
+    # asyncio.run(amain())
