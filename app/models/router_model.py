@@ -23,3 +23,6 @@ class SearchVideoRequest(BaseModel):
     publish_time: Optional[Union[int, str]] = Field(
         1, description="发布时间，1表示最近1天，7表示最近7天"
     )
+
+class Chat2Model(BaseModel):
+    content: str = Field(..., description="用户输入的内容")

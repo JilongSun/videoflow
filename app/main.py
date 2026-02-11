@@ -7,7 +7,7 @@ from videoflow.utils import log
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import util_routers
+from .routers import util_routers, chat_routers
 from videoflow.feishu import amain
 import uvicorn
 
@@ -32,6 +32,7 @@ app = FastAPI(
 
 # 包含路由
 app.include_router(util_routers)
+app.include_router(chat_routers)
 
 
 @app.get("/")

@@ -90,16 +90,17 @@ class PlatformConfig(MySettings):
             if self.api_key is None:
                 raise ValueError("如dashscopeapi_key没有正确设置")
 
-
     def _process_runway(self):
         self.base_url = "https://api.dev.runwayml.com"
-        
 
 
 class ModelSettings(PlatformConfig):
     model_name: str = Field(..., description="模型名称")
     end_point: str = Field(..., description="API 路由")
-    prompt: Annotated[Optional[str], Field(None, description="不同模型需要不同的提示词，这直接关系到输入")] = None
+    prompt: Annotated[
+        Optional[str],
+        Field(None, description="不同模型需要不同的提示词，这直接关系到输入"),
+    ] = None
 
 
 # 创建全局配置实例
@@ -146,6 +147,9 @@ qwen_dashscope = ModelSettings(
     model_name="qwen-plus",
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     end_point="使用openai兼容格式不需要end_point",
+    prompt="""
+你是一位飞书助手，你需要根据用户的问题，调用自己做持有的工具或者工作流（工作流主要集中在视频编辑，各个平台的自动发布方面），来解决用户的需求。或者回答用户的一些日常问题,作为一名助手，说话要谨慎简介，只能回答自己能力范围的时候，只能按照自己所拥有的工具的能力来回答
+""",
 )
 
 __all__ = [

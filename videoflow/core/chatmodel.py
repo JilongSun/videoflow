@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, BaseMessage, AIMessage
 from langchain_core.runnables import Runnable
+from langchain.agents import create_agent
 from pydantic import Field, BaseModel
 from typing import Optional, Annotated, Dict, Any, List, Union, Tuple, cast
 from .settings import (
@@ -415,3 +416,8 @@ wanx = WanxDashscope(**wanx_dashscpoe.model_dump())
 gen4aleph = Gen4AlephRunway(**gen4aleph_runway.model_dump())
 
 qwendashchat = QwenDashscopeChat(**qwen_dashscope.model_dump())
+
+supervised_agent = create_agent(
+    model=qwendashchat,
+    system_prompt=qwendashchat.prompt
+)
