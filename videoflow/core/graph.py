@@ -21,12 +21,8 @@ class VideoEditState(MessagesState):
     """专门用于视频编辑的工作流状态"""
 
     user_input: str
-    current_step: str
-    video_url: Optional[str]
-    video_task_id: Optional[str]
-    video_status: Optional[str]
-    model_config: Optional[ModelSettings]
-    error: Optional[str]
+    video_url: str
+    image_url: str
     result: Optional[Dict[str, Any]]
 
 
@@ -34,18 +30,25 @@ class VideoFlowWorkflow:
     """视频处理工作流框架"""
 
     def __init__(self):
-        self.workflow = StateGraph(MessagesState)
+        self.graph = StateGraph(VideoEditState)
         self._setup_workflow()
+        self.workflow = self.graph.compile()
 
     def _setup_workflow(self):
         """设置工作流节点和边"""
 
         # 定义工作流节点
-        self.workflow.add_node("start", self._start_node)
-        self.workflow.add_edge(START, "start")
+        self.graph.add_node("object_replace", self.object_replace)
+        self.graph.add_node("note", self.note)
+        self.graph.add_edge(START, "start")
+        self.graph.add_edge("object_replace", "note")
+        self.graph.add_edge("note", END)
 
-    def _start_node(self, state: VideoEditState) -> VideoEditState:
+    def object_replace(self, state: VideoEditState) -> VideoEditState:
         """开始节点,初始化状态"""
+        return state
+
+    def note(self, state: VideoEditState) -> VideoEditState:
         return state
 
     def compile(self, checkpointer: Optional[MemorySaver] = None):
@@ -53,20 +56,22 @@ class VideoFlowWorkflow:
         # if checkpointer is None:
         #     checkpointer = MemorySaver()
 
-        return self.workflow.compile(checkpointer=checkpointer)
+        return self.graph.compile(checkpointer=checkpointer)
+    
+    async def _call__(self, state: VideoEditState) -> Dict[str, Any]:
+        """调用工作流"""
+        return await self.workflow.ainvoke(state)
 
 
-class VideoFlowRunner:
-    """工作流运行器"""
-
+class WorkFlowManager:
     def __init__(self):
-        self.workflow = VideoFlowWorkflow()
-        self.app = self.workflow.compile()
+        self._workflow = []
 
-    async def run(
-        self, user_input: str, thread_id: Optional[str] = None
-    ) -> Dict[str, Any]: ...
+    def __call__(self):
+        return self._workflow
+
+    def __len__(self):
+        return len(self._workflow)
 
 
-if __name__ == "__main__":
-    ...
+workflow_manager = WorkFlowManager()

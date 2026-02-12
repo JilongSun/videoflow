@@ -4,13 +4,28 @@ from langchain_core.callbacks import (
 )
 from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.outputs import ChatResult, Generation, ChatGeneration
+from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, BaseMessage, AIMessage
 from langchain_core.runnables import Runnable
+from langchain.agents.middleware import after_model, AgentState
 from langchain.agents import create_agent
+from langchain.tools import tool
+from langgraph.runtime import Runtime
 from pydantic import Field, BaseModel
-from typing import Optional, Annotated, Dict, Any, List, Union, Tuple, cast
+from typing import (
+    Optional,
+    Annotated,
+    Dict,
+    Any,
+    List,
+    Union,
+    Tuple,
+    cast,
+    Sequence,
+    Callable,
+)
 from .settings import (
     runway_ait8,
     wanx_dashscpoe,
@@ -408,6 +423,25 @@ class QwenDashscopeChat(VideoEditBase):
         res = await self.client.ainvoke(input)
         return res
 
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable | BaseTool],
+        *,
+        tool_choice: dict | str | bool | None = None,
+        strict: bool | None = None,
+        parallel_tool_calls: bool | None = None,
+        response_format=None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        return self.client.bind_tools(
+            tools,
+            tool_choice=tool_choice,
+            strict=strict,
+            parallel_tool_calls=parallel_tool_calls,
+            response_format=response_format,
+            **kwargs,
+        )
+
 
 runway = RunwayAit8(**runway_ait8.model_dump())
 
@@ -417,7 +451,30 @@ gen4aleph = Gen4AlephRunway(**gen4aleph_runway.model_dump())
 
 qwendashchat = QwenDashscopeChat(**qwen_dashscope.model_dump())
 
+
+@tool
+async def get_weather(city: str) -> str:
+    """
+    获取城市的天气
+    """
+    return f"{city}的天气是晴朗的"
+
+
+@after_model
+def send_to_feishu(state: AgentState, runtime: Runtime):
+    """
+    发送到飞书
+    """
+    print(state)
+    messages = state["messages"][-1]
+    if isinstance(messages, AIMessage):
+        print(messages.content)
+    return None
+
+
 supervised_agent = create_agent(
     model=qwendashchat,
-    system_prompt=qwendashchat.prompt
+    system_prompt=qwendashchat.prompt,
+    tools=[get_weather],
+    middleware=[send_to_feishu],
 )
