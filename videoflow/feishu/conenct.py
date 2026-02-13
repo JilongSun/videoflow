@@ -13,7 +13,7 @@ from lark_oapi.api.im.v1 import (
 )
 from .utils import send_message
 from typing import Literal, Annotated, Union, Any
-import json, httpx
+import json, httpx, asyncio
 
 messagetype = Union[
     Literal["text"], Literal["post"]
@@ -41,17 +41,19 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
         content = [chat, image_key]
     else:
         content = "解析消息失败，请发送文本消息\nparse message failed, please send text message"
-    answer = httpx.post(
-        "http://localhost:8000/chat/chat",
-        json={
-            "content": content[0],
-            "feishu": [data.event.message.chat_type, data.event.message.message_id],
-        },
-    ).json()["content"]
     if data.event.message.chat_type == "p2p":
-        send_message(answer, data.event.message.chat_type, data.event.message.chat_id)  # type: ignore
+        send_message("已收到请求", data.event.message.chat_type, data.event.message.chat_id)  # type: ignore
     else:
-        send_message(answer, data.event.message.chat_type, data.event.message.message_id)  # type: ignore
+        send_message("已收到请求", data.event.message.chat_type, data.event.message.message_id)  # type: ignore
+    async def func():
+        httpx.post(
+            "http://localhost:8000/chat/chat",
+            json={
+                "content": content[0],
+                "feishu": [data.event.message.chat_type, data.event.message.message_id],
+            },
+        ).json()["content"]
+    asyncio.create_task(func())
 
 
 # 注册事件回调
