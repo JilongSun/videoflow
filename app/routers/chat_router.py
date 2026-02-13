@@ -4,6 +4,7 @@ from videoflow.core.chatmodel import supervised_agent
 from ..models.router_model import Chat2Model
 from videoflow.utils import log
 from langchain.messages import HumanMessage
+from pydantic import BaseModel
 
 __all__ = ["router"]
 
@@ -11,10 +12,24 @@ __all__ = ["router"]
 router = APIRouter(prefix="/chat", tags=["和大模型狗头，及调用工作流"])
 
 
+class FeiShuId(BaseModel):
+    chat_type: str
+    message_id: str
+
+
 @router.post("/chat")
 async def chat_endpoint(
     request: Chat2Model,
 ):
     log.info(f"大模型接口接受参数: 用户输入：{request.content}")
-    res = await supervised_agent.ainvoke({'messages':[HumanMessage(content=request.content)]})
-    return {"content": res['messages'][-1].content}
+    if request.feishu is not None:
+        id = FeiShuId(chat_type=request.feishu[0], message_id=request.feishu[1])
+        res = await supervised_agent.ainvoke(
+            {"messages": [HumanMessage(content=request.content)]},
+            context=id,
+        )
+    else:
+        res = await supervised_agent.ainvoke(
+            {"messages": [HumanMessage(content=request.content)]},
+        )
+    return {"content": res["messages"][-1].content}
