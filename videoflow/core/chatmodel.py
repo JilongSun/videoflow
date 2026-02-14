@@ -9,10 +9,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, BaseMessage, AIMessage
 from langchain_core.runnables import Runnable
-from langchain.agents.middleware import after_model, AgentState
-from langchain.agents import create_agent
-from langchain.tools import tool
-from langgraph.runtime import Runtime
 from pydantic import Field, BaseModel
 from typing import (
     Optional,
@@ -33,6 +29,7 @@ from .settings import (
     qwen_dashscope,
     ModelSettings,
 )
+from .graph import workflow_manager, video_flow_workflow
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
 from videoflow.utils.file_processor import (
     video_processor,
@@ -454,38 +451,3 @@ wanx = WanxDashscope(**wanx_dashscpoe.model_dump())
 gen4aleph = Gen4AlephRunway(**gen4aleph_runway.model_dump())
 
 qwendashchat = QwenDashscopeChat(**qwen_dashscope.model_dump())
-
-
-@tool
-async def get_weather(city: str) -> str:
-    """
-    获取城市的天气
-    """
-    return f"{city}的天气是晴朗的"
-
-
-@after_model
-async def send_to_feishu(state: AgentState, runtime: Runtime):
-    """
-    发送到飞书
-    """
-    log.info(f"触发send_to_feishu，这是state: {state}")
-    messages = state["messages"][-1]
-    if isinstance(messages, AIMessage):
-        if runtime.context is not None:
-            await asyncio.to_thread(
-                send_message,
-                messages.content,
-                runtime.context.chat_type,
-                runtime.context.message_id,
-            )
-            log.info(f"触发send_to_feishu，这是context: {runtime.context}")
-    return None
-
-
-supervised_agent = create_agent(
-    model=qwendashchat,
-    system_prompt=qwendashchat.prompt,
-    tools=[get_weather],
-    middleware=[send_to_feishu],
-)

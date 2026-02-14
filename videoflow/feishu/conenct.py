@@ -25,20 +25,18 @@ messagetype = Union[
 # https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/events/receive
 def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
     message_type: messagetype = data.event.message.message_type
+    content = ''
     if message_type == "text":
         temp = json.loads(data.event.message.content)["text"]
-        content = [temp]
+        content = temp
     elif message_type == "post":
         temp: list[dict] = json.loads(data.event.message.content)["content"]
-        image_key = []
-        chat = ""
         for item in temp:
             for subitem in item:
                 if subitem["tag"] == "img":
-                    image_key.append(subitem["image_key"])
+                    content += f'**{subitem["image_key"]}**'
                 elif subitem["tag"] == "text":
-                    chat += subitem["text"]
-        content = [chat, image_key]
+                    content += subitem["text"]
     else:
         content = "解析消息失败，请发送文本消息\nparse message failed, please send text message"
     if data.event.message.chat_type == "p2p":
