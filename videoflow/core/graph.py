@@ -1,7 +1,8 @@
-from typing import Dict, Any, Optional, List, TypedDict, Annotated
+from typing import Dict, Any, Optional, List, TypedDict, Annotated, Union
 from langgraph.graph import StateGraph, END, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt, Command
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, AnyMessage
 from langchain_core.tools import tool
 from videoflow.core.settings import (
@@ -25,13 +26,19 @@ class VideoEditState(BaseModel):
     image_url: str = Field(
         ..., description="用户上传的图片url或者飞书imagekey,或者本地图片"
     )
-    video_url: Optional[str] = Field(
-        None, description="用户上传的视频url或者飞书videokey或者本地图片"
-    )
+    video_keyword: str = Field(..., description="用户输入的视频关键词, 用于视频搜索")
+    video_url: Annotated[
+        Optional[str], "用户上传的视频url或者飞书videokey或者本地图片"
+    ] = None
+    provide_video_url: Annotated[
+        Optional[List[str]], "从抖音上爬取的视频url列表，由用户选择一个下载"
+    ] = None
     message_id: Annotated[
         Optional[str], "如果是通过飞书发送消息的，则需要message_id来返回消息"
     ] = None
     result: Optional[Dict[str, Any]] = None
+    end: Annotated[bool, "手动设置结束节点，如果为True，推出循环"] = False
+    # model_config = {"extra": "allow"}
 
 
 class VideoFlowWorkflow:
@@ -40,7 +47,7 @@ class VideoFlowWorkflow:
     def __init__(self):
         self.graph = StateGraph(VideoEditState)
         self._setup_workflow()
-        self.workflow = self.graph.compile()
+        self.workflow = self.compile()
 
     def _setup_workflow(self):
         """设置工作流节点和边"""
@@ -48,40 +55,69 @@ class VideoFlowWorkflow:
         # 定义工作流节点
         self.graph.add_node("download_inage", self.download_inage)
         self.graph.add_node("object_replace", self.object_replace)
+        self.graph.add_node("search_video", self.search_video)
+        self.graph.add_node("select_video", self.select_video)
         self.graph.add_edge(START, "download_inage")
-        self.graph.add_edge("download_inage", "object_replace")
+        self.graph.add_conditional_edges(
+            "download_inage",
+            lambda state: "search_video" if not state.video_url else "object_replace",
+        )
+        self.graph.add_edge("search_video", "select_video")
+        self.graph.add_edge("select_video", "object_replace")
         self.graph.add_edge("object_replace", END)
 
     async def object_replace(self, state: VideoEditState) -> VideoEditState:
         """开始节点,初始化状态"""
-        print("aaaaaaaaaaaaaaaaaa")
+        state.end = True
         return state
 
     async def download_inage(self, state: VideoEditState) -> VideoEditState:
         """下载用户上传的图片"""
-        if state.image_url.startswith("img_v3") or state.image_url.endswith(".webp"):
-            if state.message_id is None:
-                raise ValueError("如果是通过飞书分享链接，则需要message_id来下载图片")
-            else:
-                res = await download_image_fromfeishu(state.message_id, state.image_url)
-                success = await write_file(state.image_url + ".webp", res)
-                if not success:
-                    log.error(f"写入图片到本地失败, 图片key: {state.image_url}")
-                    raise Exception(f"写入图片到本地失败, 图片key: {state.image_url}")
-                log.info(f"写入图片到本地成功, 图片key: {state.image_url}")
-                state.image_url = state.image_url + ".webp"
+        # if state.image_url.startswith("img_v3") or state.image_url.endswith(".webp"):
+        #     if state.message_id is None:
+        #         raise ValueError("如果是通过飞书分享链接，则需要message_id来下载图片")
+        #     else:
+        #         res = await download_image_fromfeishu(state.message_id, state.image_url)
+        #         success = await write_file(state.image_url + ".webp", res)
+        #         if not success:
+        #             log.error(f"写入图片到本地失败, 图片key: {state.image_url}")
+        #             raise Exception(f"写入图片到本地失败, 图片key: {state.image_url}")
+        #         log.info(f"写入图片到本地成功, 图片key: {state.image_url}")
+        #         state.image_url = state.image_url + ".webp"
+        return state
+
+    async def search_video(self, state: VideoEditState) -> VideoEditState:
+        """根据用户输入的视频关键词, 从视频库中选择视频"""
+        state.provide_video_url = ["video1", "video2", "video3"]
+        return state
+
+    async def select_video(self, state: VideoEditState) -> VideoEditState:
+        """根据用户输入的视频关键词, 从视频库中选择视频"""
+        url = interrupt({"provide_video_url": state.provide_video_url})
+        state.video_url = url
         return state
 
     def compile(self, checkpointer: Optional[MemorySaver] = None):
-        """编译工作流,暂时先不添加记忆功能"""
-        # if checkpointer is None:
-        #     checkpointer = MemorySaver()
+        if checkpointer is None:
+            checkpointer = MemorySaver()
 
         return self.graph.compile(checkpointer=checkpointer)
 
-    async def ainvoke(self, state: VideoEditState) -> Dict[str, Any]:
+    async def ainvoke(self, state: VideoEditState, config) -> Dict[str, Any]:
         """调用工作流"""
-        return await self.workflow.ainvoke(state)
+        state_out: Union[VideoEditState, Command] = state
+
+        async def process(state_in: Union[VideoEditState, Command]):
+            return await self.workflow.ainvoke(state_in, config)
+
+        while True:
+            chunk = await process(state_out)
+            if "__interrupt__" in chunk:
+                interrupt_info = chunk["__interrupt__"][0].value
+                state_out = Command(resume="aaaaaaaacvc")
+            elif chunk["end"]:
+                break
+        return chunk
 
 
 class WorkFlowManager:

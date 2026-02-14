@@ -24,9 +24,16 @@ async def chat_endpoint(
     log.info(f"大模型接口接受参数: 用户输入：{request.content}")
     if request.feishu is not None:
         id = FeiShuId(chat_type=request.feishu[0], message_id=request.feishu[1])
+        config = {"configurable": {"thread_id": id.message_id}}
         res = await supervised_agent.ainvoke(
-            {"messages": [HumanMessage(content=request.content + f'message_id: {id.message_id}')]},
-            context=id,
+            {
+                "messages": [
+                    HumanMessage(
+                        content=request.content + f"message_id: {id.message_id}"
+                    )
+                ]
+            },
+            config,
         )
     else:
         res = await supervised_agent.ainvoke(
