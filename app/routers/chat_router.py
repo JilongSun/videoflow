@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
-from videoflow.core.chatmodel import supervised_agent
+from videoflow.core.agents import supervised_agent
 from ..models.router_model import Chat2Model
 from videoflow.utils import log
 from langchain.messages import HumanMessage
@@ -25,7 +25,7 @@ async def chat_endpoint(
     if request.feishu is not None:
         id = FeiShuId(chat_type=request.feishu[0], message_id=request.feishu[1])
         res = await supervised_agent.ainvoke(
-            {"messages": [HumanMessage(content=request.content)]},
+            {"messages": [HumanMessage(content=request.content + f'message_id: {id.message_id}')]},
             context=id,
         )
     else:

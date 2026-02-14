@@ -47,7 +47,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
         httpx.post(
             "http://localhost:8000/chat/chat",
             json={
-                "content": content[0],
+                "content": content,
                 "feishu": [data.event.message.chat_type, data.event.message.message_id],
             },
         ).json()["content"]

@@ -10,7 +10,8 @@ from lark_oapi.api.im.v1 import (
     ReplyMessageRequestBody,
 )
 from typing import Literal, Annotated, Union, Any, Dict
-import json
+from videoflow.utils import log
+import json, httpx
 
 client = lark.Client.builder().app_id(lark.APP_ID).app_secret(lark.APP_SECRET).build()  # type: ignore
 
@@ -58,3 +59,38 @@ def send_message(
             raise Exception(
                 f"client.im.v1.message.reply failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}"
             )
+
+
+async def get_tenant_access_token():
+    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    body = {
+        "app_id": lark.APP_ID,
+        "app_secret": lark.APP_SECRET,
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=body)
+    if response.status_code == 200:
+        res = response.json()["tenant_access_token"]
+        log.info(f"get_tenant_access_token: {res}")
+        return res
+
+
+async def download_image_fromfeishu(message_id: str, image_url: str):
+    base_url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{image_url}?type=image"
+    key = await get_tenant_access_token()
+    header = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(base_url, headers=header)
+    if response.status_code == 200:
+        log.info(f"从飞书获取图片二进制数据成功, 飞书图片key: {image_url}")
+        return response.content
+    else:
+        log.error(
+            f"从飞书获取图片二进制数据失败, 飞书图片key: {image_url}, 错误信息: {response.json()}"
+        )
+        raise Exception(
+            f"从飞书获取图片二进制数据失败, 飞书图片key: {image_url}, 错误信息: {response.json()}"
+        )
