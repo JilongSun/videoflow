@@ -25,7 +25,7 @@ messagetype = Union[
 # https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/events/receive
 def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
     message_type: messagetype = data.event.message.message_type
-    content = ''
+    content = ""
     if message_type == "text":
         temp = json.loads(data.event.message.content)["text"]
         content = temp
@@ -43,6 +43,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
         send_message("已收到请求", data.event.message.chat_type, data.event.message.chat_id)  # type: ignore
     else:
         send_message("已收到请求", data.event.message.chat_type, data.event.message.message_id)  # type: ignore
+
     async def func():
         httpx.post(
             "http://localhost:8000/chat/chat",
@@ -50,7 +51,9 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
                 "content": content,
                 "feishu": [data.event.message.chat_type, data.event.message.message_id],
             },
-        ).json()["content"]
+            timeout=999999,
+        )
+
     asyncio.create_task(func())
 
 

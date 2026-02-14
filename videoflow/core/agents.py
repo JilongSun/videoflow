@@ -6,6 +6,9 @@ from langgraph.runtime import Runtime
 from videoflow.utils import log
 from .chatmodel import qwendashchat
 from .graph import workflow_manager, video_flow_workflow
+from videoflow.feishu.utils import send_message
+import asyncio
+
 
 @tool
 async def get_weather(city: str) -> str:

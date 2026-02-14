@@ -34,6 +34,7 @@ async def chat_endpoint(
                 ]
             },
             config,
+            context=id,
         )
     else:
         res = await supervised_agent.ainvoke(
