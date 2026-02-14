@@ -15,6 +15,7 @@ from videoflow.core.settings import (
 from videoflow.utils import log
 from pydantic import BaseModel, Field
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
+from videoflow.feishu.utils import send_message
 from ..feishu.utils import get_tenant_access_token, download_image_fromfeishu
 import asyncio, json, os, httpx
 
@@ -88,7 +89,11 @@ class VideoFlowWorkflow:
 
     async def search_video(self, state: VideoEditState) -> VideoEditState:
         """根据用户输入的视频关键词, 从视频库中选择视频"""
-        state.provide_video_url = ["video1", "video2", "video3"]
+        state.provide_video_url = [
+            "https://www.baidu.com",
+            "https://www.bilibili.com/",
+            "https://github.com/",
+        ]
         return state
 
     async def select_video(self, state: VideoEditState) -> VideoEditState:
@@ -114,6 +119,18 @@ class VideoFlowWorkflow:
             chunk = await process(state_out)
             if "__interrupt__" in chunk:
                 interrupt_info = chunk["__interrupt__"][0].value
+                if "provide_video_url" in interrupt_info:
+                    if state.message_id is None:
+                        raise ValueError(
+                            "如果是通过飞书分享链接，则需要message_id来返回消息"
+                        )
+                    await asyncio.to_thread(
+                        send_message,
+                        "\n".join(interrupt_info["provide_video_url"])
+                        + "请选择一个视频",
+                        "group",
+                        state.message_id,
+                    )
                 state_out = Command(resume="aaaaaaaacvc")
             elif chunk["end"]:
                 break

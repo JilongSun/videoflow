@@ -41,7 +41,6 @@ from langchain_core.language_models.base import (
     LangSmithParams,
     LanguageModelInput,
 )
-from videoflow.feishu.utils import send_message
 from videoflow.utils import log
 from abc import ABC, abstractmethod
 from runwayml import RunwayML
