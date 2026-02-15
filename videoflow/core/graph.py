@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, List, TypedDict, Annotated, Union
+from typing import Dict, Any, Optional, List, TypedDict, Annotated, Union, cast
 from langgraph.graph import StateGraph, END, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
@@ -16,11 +16,12 @@ from videoflow.utils import log
 from pydantic import BaseModel, Field
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
 from videoflow.utils.crawlers.crawler import crawler
-from videoflow.feishu.utils import send_message
+from .chatmodel import gen4aleph
 from ..feishu.utils import (
     get_tenant_access_token,
     download_image_fromfeishu,
     polling_reply_message,
+    send_message,
 )
 import asyncio, json, os, httpx
 
@@ -34,7 +35,7 @@ class VideoEditState(BaseModel):
     )
     video_keyword: str = Field(..., description="用户输入的视频关键词, 用于视频搜索")
     video_url: Annotated[
-        Optional[str], "用户上传的视频url或者飞书videokey或者本地图片"
+        Optional[str], "用户上传的视频url或者飞书videokey或者本地视频"
     ] = None
     provide_video_url: Annotated[
         Optional[List[str]], "从抖音上爬取的视频url列表，由用户选择一个下载"
@@ -42,8 +43,7 @@ class VideoEditState(BaseModel):
     message_id: Annotated[
         Optional[str], "如果是通过飞书发送消息的，则需要message_id来返回消息"
     ] = None
-    result: Optional[Dict[str, Any]] = None
-    end: Annotated[bool, "手动设置结束节点，如果为True，推出循环"] = False
+    result: Optional[str] = None
     # model_config = {"extra": "allow"}
 
 
@@ -59,13 +59,13 @@ class VideoFlowWorkflow:
         """设置工作流节点和边"""
 
         # 定义工作流节点
-        self.graph.add_node("download_inage", self.download_inage)
+        self.graph.add_node("download_image", self.download_image)
         self.graph.add_node("object_replace", self.object_replace)
         self.graph.add_node("search_video", self.search_video)
         self.graph.add_node("select_video", self.select_video)
-        self.graph.add_edge(START, "download_inage")
+        self.graph.add_edge(START, "download_image")
         self.graph.add_conditional_edges(
-            "download_inage",
+            "download_image",
             lambda state: "search_video" if not state.video_url else "object_replace",
         )
         self.graph.add_edge("search_video", "select_video")
@@ -74,22 +74,39 @@ class VideoFlowWorkflow:
 
     async def object_replace(self, state: VideoEditState) -> VideoEditState:
         """开始节点,初始化状态"""
-        state.end = True
+        if state.video_url is None:
+            raise ValueError("视频url不能为空")
+        if state.message_id is None:
+            raise ValueError("如果是通过飞书分享链接，则需要message_id来返回消息")
+        res = await gen4aleph.ainvoke(
+            [state.image_url],
+            state.video_url,
+        )
+        if res.content is None:
+            raise ValueError("视频编辑失败")
+        state.result = cast(str, res.content)
+        send_message_id = await asyncio.to_thread(
+            send_message,
+            state.result + "这是你编辑后的视频",
+            "group",
+            state.message_id,
+        )
+        await write_file("edited" + state.video_url, state.result)
         return state
 
-    async def download_inage(self, state: VideoEditState) -> VideoEditState:
+    async def download_image(self, state: VideoEditState) -> VideoEditState:
         """下载用户上传的图片"""
-        # if state.image_url.startswith("img_v3") or state.image_url.endswith(".webp"):
-        #     if state.message_id is None:
-        #         raise ValueError("如果是通过飞书分享链接，则需要message_id来下载图片")
-        #     else:
-        #         res = await download_image_fromfeishu(state.message_id, state.image_url)
-        #         success = await write_file(state.image_url + ".webp", res)
-        #         if not success:
-        #             log.error(f"写入图片到本地失败, 图片key: {state.image_url}")
-        #             raise Exception(f"写入图片到本地失败, 图片key: {state.image_url}")
-        #         log.info(f"写入图片到本地成功, 图片key: {state.image_url}")
-        #         state.image_url = state.image_url + ".webp"
+        if state.image_url.startswith("img_v3") or state.image_url.endswith(".webp"):
+            if state.message_id is None:
+                raise ValueError("如果是通过飞书分享链接，则需要message_id来下载图片")
+            else:
+                res = await download_image_fromfeishu(state.message_id, state.image_url)
+                success = await write_file(state.image_url + ".webp", res)
+                if not success:
+                    log.error(f"写入图片到本地失败, 图片key: {state.image_url}")
+                    raise Exception(f"写入图片到本地失败, 图片key: {state.image_url}")
+                log.info(f"写入图片到本地成功, 图片key: {state.image_url}")
+                state.image_url = state.image_url + ".webp"
         return state
 
     async def search_video(self, state: VideoEditState) -> VideoEditState:
@@ -140,8 +157,14 @@ class VideoFlowWorkflow:
                     temp = await polling_reply_message(send_message_id)
                     content = json.loads(temp)["text"]
                     content = "http" + content.split("http")[1]
-                    state_out = Command(resume=content)
-            elif chunk["end"]:
+                    success, video_id = await crawler.download_video(
+                        content, file_name=state.message_id + ".mp4"
+                    )
+                    if not success:
+                        log.error(f"下载视频失败, 视频url: {content}")
+                        raise Exception(f"下载视频失败, 视频url: {content}")
+                    state_out = Command(resume=state.message_id + ".mp4")
+            elif chunk["result"] is not None:
                 break
         return chunk
 

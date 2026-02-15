@@ -29,7 +29,6 @@ from .settings import (
     qwen_dashscope,
     ModelSettings,
 )
-from .graph import workflow_manager, video_flow_workflow
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
 from videoflow.utils.file_processor import (
     video_processor,
@@ -346,7 +345,7 @@ class Gen4AlephRunway(VideoEditBase):
         elif file_name.startswith(("http", "https")):
             raise ValueError("runway模型只支持runway://开头的uri")
         file = await get_file_path(file_name)
-        response = self.client.uploads.create_ephemeral(file=Path(file))
+        response = self.client.uploads.create_ephemeral(file=Path(file),timeout=self.timeout)
         return response.uri
 
 
