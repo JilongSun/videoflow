@@ -1,5 +1,6 @@
 from .image_processor import image_processor
 from .doc_processor import doc_processor
+from .video_processor import video_processor
 from .base import file_processor, FP
 from typing import TypeVar, Awaitable, Any, Optional, Generic, cast
 
@@ -27,6 +28,7 @@ class FileProcessorProvider(Generic[FP]):
 file_processor_provider = FileProcessorProvider()
 file_processor_provider.register(image_processor)
 file_processor_provider.register(doc_processor)
+file_processor_provider.register(video_processor)
 
 
 async def read_file(filename: str, path: Optional[str] = None) -> bytes:

@@ -1,6 +1,6 @@
 from .base import file_processor
-from app.utils.logger_config import log
-from ...models.router_model import file_content
+from videoflow.utils.logger_config import log
+from app.models.router_model import file_content
 from pathlib import Path
 from typing import Optional
 import os, aiofiles, base64
@@ -30,7 +30,7 @@ class DocProcessor(file_processor):
         )
         os.makedirs(self.file_reader_folder, exist_ok=True)
         os.makedirs(self.file_writer_folder, exist_ok=True)
-        self._extensions: tuple[str, ...] = (".txt", ".docx")
+        self._extensions: tuple[str, ...] = (".txt", ".docx", ".json")
 
     async def read_file(self, filename: str, path: Optional[str] = None):
         log.info(
