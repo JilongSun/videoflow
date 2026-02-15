@@ -23,26 +23,35 @@ from ..feishu.utils import (
     polling_reply_message,
     send_message,
 )
-import asyncio, json, os, httpx
+import asyncio, json, os, httpx, uuid
 
 
 class VideoEditState(BaseModel):
-    """专门用于视频编辑的工作流状态"""
+    """
+    专门用于视频编辑的工作流状态
+    用户在启动工作流时，必须要提供抖音搜索关键词，以及用来替换的图片
+    """
 
     messages: Annotated[list[AnyMessage], add_messages]
     image_url: str = Field(
-        ..., description="用户上传的图片url或者飞书imagekey,或者本地图片"
+        ...,
+        description="用户上传的图片url或者飞书imagekey,或者本地图片，当用户是通过飞书调用时，只通过聊天框发送图片",
     )
-    video_keyword: str = Field(..., description="用户输入的视频关键词, 用于视频搜索")
+    video_keyword: str = Field(
+        ...,
+        description="用户输入的视频关键词, 用于视频搜索，用户在调用大模型时要提供搜索关键字",
+    )
+    message_id: str = Field(
+        ...,
+        description="如果是通过飞书发送消息的，则需要message_id来返回消息",
+    )
     video_url: Annotated[
         Optional[str], "用户上传的视频url或者飞书videokey或者本地视频"
     ] = None
     provide_video_url: Annotated[
         Optional[List[str]], "从抖音上爬取的视频url列表，由用户选择一个下载"
     ] = None
-    message_id: Annotated[
-        Optional[str], "如果是通过飞书发送消息的，则需要message_id来返回消息"
-    ] = None
+
     result: Optional[str] = None
     # model_config = {"extra": "allow"}
 
@@ -131,8 +140,15 @@ class VideoFlowWorkflow:
 
         return self.graph.compile(checkpointer=checkpointer)
 
-    async def ainvoke(self, state: VideoEditState, config) -> Dict[str, Any]:
-        """调用工作流"""
+    async def ainvoke(self, state: VideoEditState) -> Dict[str, Any]:
+        """
+        这是视频编辑工作流
+        """
+        config = {
+            "configurable": {
+                "thread_id": state.message_id if state.message_id else str(uuid.uuid4())
+            }
+        }
         state_out: Union[VideoEditState, Command] = state
 
         async def process(state_in: Union[VideoEditState, Command]):
