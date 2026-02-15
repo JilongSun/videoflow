@@ -43,11 +43,11 @@ async def search_video_endpoint(request: SearchVideoRequest):
     log.info(
         f"搜索视频接口接受参数: 关键词：{request.keyword}, 发布时间：{request.publish_time}"
     )
-    path = await crawler.search_video(request.keyword, request.publish_time)
-    if path:
-        return {"message": "Video search success", "path": path}
+    list_url = await crawler.search_video(request.keyword, request.publish_time)
+    if list_url:
+        return {"message": "Video search success", "list_url": list_url}
     else:
-        return {"message": "Video search failed", "path": None}
+        return {"message": "Video search failed", "list_url": None}
 
 
 @router.post("/upload-file", deprecated=True)

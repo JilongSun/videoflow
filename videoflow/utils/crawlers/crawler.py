@@ -2,7 +2,7 @@ from videoflow.utils import log
 from ..file_processor import read_file, write_file, get_file_path
 from ..file_processor.video_processor import video_processor
 from .models import TkhubInfo
-from typing import Union, Optional, Annotated
+from typing import Union, Optional, Annotated, List
 from tikhub_sdk_v2.rest import ApiException
 import os, httpx, json, asyncio, uuid, tikhub_sdk_v2
 
@@ -30,9 +30,7 @@ class Crawler:
 
     async def search_video(
         self, target: str, publish_time: Optional[Union[int, str]] = "1"
-    ) -> Optional[
-        Annotated[str, "爬取的文件信息保存路径, 包含文件名，爬取失败返回None"]
-    ]:
+    ) -> Annotated[List, "爬取到的视频链接列表，爬取失败返回空列表"]:
         if isinstance(publish_time, int):
             publish_time = str(publish_time)
         endpoint = "/api/v1/douyin/search/fetch_video_search_v1"
@@ -66,10 +64,11 @@ class Crawler:
             await write_file(f"{target}_{name}.json", tkhun_info.model_dump_json())
             log.info(tkhun_info)
             path = await get_file_path(f"{target}_{name}.json")
-            return path
+            list_url = await self._extract_video_info(tkhun_info)
+            return list_url if len(list_url) <= 10 else list_url[:10]
         else:
             log.error(f"搜索视频 {target} 失败，状态码: {response.status_code}")
-            return None
+            return []
 
     async def download_video(
         self,
@@ -83,6 +82,19 @@ class Crawler:
             download_path=download_path,
         )
         return success, video_id
+
+    async def _extract_video_info(
+        self,
+        tkhun_info: TkhubInfo,
+    ):
+        res = []
+        if tkhun_info.data is not None:
+            if tkhun_info.data.data is not None:
+                lists = tkhun_info.data.data
+                for item in lists:
+                    if item.aweme_info is not None:
+                        res.append(item.aweme_info.share_url)
+        return res
 
 
 crawler = Crawler()

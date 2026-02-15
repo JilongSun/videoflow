@@ -11,14 +11,14 @@ from lark_oapi.api.im.v1 import (
 )
 from typing import Literal, Annotated, Union, Any, Dict
 from videoflow.utils import log
-import json, httpx, os
+import json, httpx, os, asyncio
 
 client = lark.Client.builder().app_id(lark.APP_ID).app_secret(lark.APP_SECRET).build()  # type: ignore
 
 
 def send_message(
     content: Union[str, list, Dict], chat_type: Literal["p2p", "group"], message_id: str
-):
+) -> Annotated[str, "message_id"]:
     send = json.dumps({"text": content})
     if chat_type == "p2p":
         request = (
@@ -32,7 +32,7 @@ def send_message(
                 .build()
             )
             .build()
-        ) # type: ignore
+        )  # type: ignore
         # 使用发送OpenAPI发送消息
         # Use send OpenAPI to send messages
         # https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/create
@@ -59,6 +59,7 @@ def send_message(
             raise Exception(
                 f"client.im.v1.message.reply failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}"
             )
+    return response.data.message_id
 
 
 async def get_tenant_access_token():
@@ -113,17 +114,21 @@ async def get_new_message():
         "page_size": 1,
     }
     async with httpx.AsyncClient() as client:
-        response = await client.post(base_url, headers=header, json=body)
+        response = await client.get(base_url, headers=header, params=body)
     if response.status_code == 200:
         return response.json()
     else:
         log.error(f"从飞书获取最新消息失败, 错误信息: {response.json()}")
         raise Exception(f"从飞书获取最新消息失败, 错误信息: {response.json()}")
-    
-async def polling_reply_message():
+
+
+async def polling_reply_message(parent_id: str):
     while True:
         try:
             res = await get_new_message()
-            log.info(f"从飞书获取最新消息成功, 消息内容: {res}")
+            item = res["data"]["items"][0]
+            if item["parent_id"] == parent_id:
+                return item["body"]["content"]
         except Exception as e:
             log.error(f"从飞书获取最新消息失败, 错误信息: {e}")
+        await asyncio.sleep(10)

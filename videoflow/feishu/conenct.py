@@ -54,7 +54,8 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             timeout=999999,
         )
 
-    asyncio.create_task(func())
+    if data.event.message.parent_id is None and data.event.message.root_id is None:
+        asyncio.create_task(func())
 
 
 # 注册事件回调
