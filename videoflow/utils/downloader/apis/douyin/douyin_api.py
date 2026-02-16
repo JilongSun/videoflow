@@ -1,7 +1,7 @@
 import re
 import httpx
 from datetime import datetime
-from downloader.apis.api_client import MainAPIClient
+from ..api_client import MainAPIClient
 
 
 class DouyinAPI:

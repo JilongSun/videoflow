@@ -3,7 +3,7 @@
 TikHub Downloader - A GUI application for downloading videos from TikTok and Douyin
 """
 
-from downloader.constants import APP_VERSION
+from .constants import APP_VERSION
 
 __version__ = APP_VERSION
 

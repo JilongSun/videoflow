@@ -1,6 +1,6 @@
 import re
 import httpx
-from downloader.apis.api_client import MainAPIClient
+from ..api_client import MainAPIClient
 from datetime import datetime
 
 
@@ -294,7 +294,7 @@ class TikTokAPI:
 
 
 if "__main__" == __name__:
-    from downloader.apis.api_client import MainAPIClient
+    from ..api_client import MainAPIClient
 
     api_key = "x"
     main_client = MainAPIClient(api_key=api_key)

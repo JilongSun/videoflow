@@ -1,5 +1,5 @@
 import httpx
-from downloader.apis.api_client import MainAPIClient
+from ..api_client import MainAPIClient
 from typing import Optional
 
 

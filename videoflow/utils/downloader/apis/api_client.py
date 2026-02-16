@@ -2,7 +2,7 @@
 Main API client for TikHub.io using httpx for synchronous requests
 """
 
-from downloader.constants import HTTP_CLIENT_USER_AGENT
+from ..constants import HTTP_CLIENT_USER_AGENT
 from videoflow.utils.logger_config import log
 from urllib import parse
 from urllib.parse import urlparse, parse_qs, urlunparse, urlencode
@@ -252,7 +252,7 @@ class MainAPIClient:
         self.proxy = proxy or None
 
         # Set up the API clients (Use lazy loading to avoid circular imports)
-        from downloader.apis.tikhub.tikhub_api import TikHubAPI
+        from .tikhub.tikhub_api import TikHubAPI
 
         self.tikhub_api = TikHubAPI(self)
 
@@ -260,7 +260,7 @@ class MainAPIClient:
         self.is_configured = self._check_configuration()
 
         # Douyin API
-        from downloader.apis.douyin.douyin_api import DouyinAPI
+        from .douyin.douyin_api import DouyinAPI
 
         self.douyin_api = DouyinAPI(self)
 
