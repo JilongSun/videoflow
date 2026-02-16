@@ -12,11 +12,11 @@ import re
 import httpx
 from jinja2 import Template
 from typing import Optional, Any
-from downloader.core.fallback_html_template import (
+from .fallback_html_template import (
     fallback_album_template,
     fallback_mixed_template,
 )
-from downloader.constants import DEFAULT_VIDEO_HEADERS
+from ..constants import DEFAULT_VIDEO_HEADERS
 from videoflow.utils.logger_config import log
 
 

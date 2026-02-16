@@ -3,8 +3,8 @@ from pathlib import Path
 from typing import Optional, cast, Tuple, Annotated, Union
 from app.models.router_model import file_content
 from videoflow.utils.logger_config import log
-from downloader.apis.api_client import MainAPIClient
-from downloader.core.downloader import VideoDownloader
+from videoflow.utils.downloader.apis.api_client import MainAPIClient
+from videoflow.utils.downloader.core.downloader import VideoDownloader
 import os, aiofiles, httpx, base64, asyncio, ffmpeg
 
 __all__ = ["video_processor"]
@@ -137,6 +137,7 @@ class VideoProcessor(file_processor):
         video_path = await self.get_file_path(video_id)
         arg = list(map(lambda x: str(x), kwargs.values()))
         out = video_path.replace(".mp4", f"_{'_'.join(arg)}.mp4")
+
         def func():
             (
                 ffmpeg.input(video_path)
