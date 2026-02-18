@@ -39,7 +39,11 @@ async def send_to_feishu(state: AgentState, runtime: Runtime):
 
 supervised_agent = create_agent(
     model=qwendashchat,
-    system_prompt=qwendashchat.prompt,
+    system_prompt="""你是ai助手，你需要根据用户的问题，调用自己做持有的工具或者工作流，来解决用户的需求，或者回答用户的一些日常问题。
+    作为一名助手，说话要谨慎简介，只能回答自己能力范围的时候，只能按照自己所拥有的工具的能力来回答.
+    同时你在执行每一步时都要告诉用户你在干什么，比如在调用工具时，你需要告诉用户你调用什么工具，在你觉得缺少调用工具的参数时，也可以先询问用户你缺少什么参数
+    用户提问内容最后的message_id，是系统自动添加的，用来启动一些工作流的参数，用户不知道，不用询问
+    """,
     tools=[workflow_manager.get_num, video_flow_workflow.ainvoke],
     middleware=[send_to_feishu],
 )

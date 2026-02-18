@@ -134,6 +134,21 @@ class VideoProcessor(file_processor):
         return success, video_id
 
     async def split_video(self, video_id: str, **kwargs):
+        """Trim the input so that the output contains one continuous subpart of the input.
+
+        Args:
+            start: Specify the time of the start of the kept section, i.e. the frame with the timestamp start will be the
+                first frame in the output.
+            end: Specify the time of the first frame that will be dropped, i.e. the frame immediately preceding the one
+                with the timestamp end will be the last frame in the output.
+            start_pts: This is the same as start, except this option sets the start timestamp in timebase units instead of
+                seconds.
+            end_pts: This is the same as end, except this option sets the end timestamp in timebase units instead of
+                seconds.
+            duration: The maximum duration of the output in seconds.
+            start_frame: The number of the first frame that should be passed to the output.
+            end_frame: The number of the first frame that should be dropped.
+        """
         video_path = await self.get_file_path(video_id)
         arg = list(map(lambda x: str(x), kwargs.values()))
         out = video_path.replace(".mp4", f"_{'_'.join(arg)}.mp4")
@@ -149,6 +164,17 @@ class VideoProcessor(file_processor):
 
         await asyncio.to_thread(func)
         return video_id.replace(video_id[-4:], f"_{'_'.join(arg)}{video_id[-4:]}")
+
+    async def detect_video_len(self, video: str):
+        path = await self.get_file_path(video)
+
+        def func():
+            return ffmpeg.probe(path)
+
+        probe = await asyncio.to_thread(func)
+        duration_seconds = int(float(probe["format"]["duration"]))
+        log.info(f"视频时长: {duration_seconds}")
+        return duration_seconds
 
 
 video_processor = VideoProcessor()
