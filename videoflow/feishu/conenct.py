@@ -29,7 +29,10 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
     if message_type == "text":
         temp = json.loads(data.event.message.content)["text"]
         content = temp
+        if not "@_" in content:
+            return
     elif message_type == "post":
+        at_count = 0
         temp: list[dict] = json.loads(data.event.message.content)["content"]
         for item in temp:
             for subitem in item:
@@ -37,6 +40,10 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
                     content += f'**{subitem["image_key"]}**'
                 elif subitem["tag"] == "text":
                     content += subitem["text"]
+                elif subitem["tag"] == "at":
+                    at_count += 1
+        if at_count == 0:
+            return
     else:
         content = "解析消息失败，请发送文本消息\nparse message failed, please send text message"
     if data.event.message.chat_type == "p2p":
@@ -54,8 +61,8 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             timeout=999999,
         )
 
-    if data.event.message.parent_id is None and data.event.message.root_id is None:
-        asyncio.create_task(func())
+    # if data.event.message.parent_id is None and data.event.message.root_id is None:
+    #     asyncio.create_task(func())
 
 
 # 注册事件回调

@@ -134,6 +134,8 @@ class VideoFlowWorkflow:
         state.video_url = url
         return state
 
+    
+
     def compile(self, checkpointer: Optional[MemorySaver] = None):
         if checkpointer is None:
             checkpointer = MemorySaver()
