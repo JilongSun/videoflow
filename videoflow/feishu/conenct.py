@@ -24,16 +24,16 @@ messagetype = Union[
 # Register event handler to handle received messages.
 # https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/events/receive
 def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
-    message_type: messagetype = data.event.message.message_type
+    message_type: messagetype = data.event.message.message_type # type: ignore
     content = ""
     if message_type == "text":
-        temp = json.loads(data.event.message.content)["text"]
+        temp = json.loads(data.event.message.content)["text"] # type: ignore
         content = temp
         if not "@_" in content:
             return
     elif message_type == "post":
         at_count = 0
-        temp: list[dict] = json.loads(data.event.message.content)["content"]
+        temp: list[dict] = json.loads(data.event.message.content)["content"] # type: ignore
         for item in temp:
             for subitem in item:
                 if subitem["tag"] == "img":
@@ -46,7 +46,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             return
     else:
         content = "解析消息失败，请发送文本消息\nparse message failed, please send text message"
-    if data.event.message.chat_type == "p2p":
+    if data.event.message.chat_type == "p2p": # type: ignore
         send_message("已收到请求", data.event.message.chat_type, data.event.message.chat_id)  # type: ignore
     else:
         send_message("已收到请求", data.event.message.chat_type, data.event.message.message_id)  # type: ignore
@@ -56,13 +56,13 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             "http://localhost:8000/chat/chat",
             json={
                 "content": content,
-                "feishu": [data.event.message.chat_type, data.event.message.message_id],
+                "feishu": [data.event.message.chat_type, data.event.message.message_id], # type: ignore
             },
             timeout=999999,
         )
 
-    # if data.event.message.parent_id is None and data.event.message.root_id is None:
-    #     asyncio.create_task(func())
+    if data.event.message.parent_id is None and data.event.message.root_id is None: # type: ignore
+        asyncio.create_task(func())
 
 
 # 注册事件回调

@@ -1,6 +1,6 @@
 from .base import file_processor
 from pathlib import Path
-from typing import Optional, cast, Tuple, Annotated, Union
+from typing import Optional, cast, Tuple, Annotated, Union, List
 from app.models.router_model import file_content
 from videoflow.utils.logger_config import log
 from videoflow.utils.downloader.apis.api_client import MainAPIClient
@@ -151,7 +151,8 @@ class VideoProcessor(file_processor):
         """
         video_path = await self.get_file_path(video_id)
         arg = list(map(lambda x: str(x), kwargs.values()))
-        out = video_path.replace(".mp4", f"_{'_'.join(arg)}.mp4")
+        splited_video = "_".join(arg) + "_" + video_id
+        out = await self.get_file_path(splited_video)
 
         def func():
             (
@@ -163,9 +164,99 @@ class VideoProcessor(file_processor):
             )
 
         await asyncio.to_thread(func)
-        return video_id.replace(video_id[-4:], f"_{'_'.join(arg)}{video_id[-4:]}")
+        return splited_video
 
-    async def detect_video_len(self, video: str):
+    async def concatenate_video(
+        self, video_list: list[List], original_video: str
+    ) -> Annotated[str, "合并后的视频名"]:
+        """将多个视频合并为一个视频
+        video_list:[[[start_sec,end_sec],sliced-video,edited-sliced-video]]
+        original_video: 原视频
+        """
+        for item in video_list:
+            await self.simple_concatenate_video(
+                original_video,
+                item[2],
+                "edited" + original_video,
+                item[0][0],
+                item[0][1],
+            )
+        return "edited" + original_video
+
+    async def simple_concatenate_video(
+        self,
+        original_video,
+        new_video,
+        output_video,
+        start_sec: int,
+        end_sec: int,
+        new_start_sec=0,
+    ):
+        """
+        简单替换：用新视频的片段替换原视频的指定时间段
+        """
+        original_path = await self.get_file_path(original_video)
+        new_path = await self.get_file_path(new_video)
+        output_path = await self.get_file_path(output_video)
+
+        def func():
+            try:
+                # 计算新视频使用时长
+                new_duration = end_sec - start_sec
+
+                # 读取原视频
+                original = ffmpeg.input(original_path)
+
+                # 获取原视频前段（0到start_sec）
+                if start_sec > 0:
+                    part1 = original.trim(start=0, end=start_sec).setpts("PTS-STARTPTS")
+                else:
+                    part1 = None
+
+                # 读取新视频片段
+                new_video = ffmpeg.input(new_path)
+                part2 = new_video.trim(
+                    start=new_start_sec, duration=new_duration
+                ).setpts("PTS-STARTPTS")
+
+                # 获取原视频后段（end_sec到结束）
+                probe = ffmpeg.probe(original_path)
+                original_duration = float(probe["format"]["duration"])
+                if end_sec < original_duration:
+                    part3 = original.trim(start=end_sec).setpts("PTS-STARTPTS")
+                else:
+                    part3 = None
+
+                # 拼接三段
+                inputs = []
+                if part1:
+                    inputs.append(part1)
+                inputs.append(part2)
+                if part3:
+                    inputs.append(part3)
+
+                if len(inputs) == 1:
+                    # 如果只有一段，直接输出
+                    output_stream = inputs[0]
+                else:
+                    # 多段拼接
+                    output_stream = ffmpeg.concat(*inputs, v=1, a=1)
+
+                # 输出
+                (ffmpeg.output(output_stream, output_path).overwrite_output().run())
+
+                print(f"✓ 简单替换完成: {output_path}")
+                return True
+
+            except Exception as e:
+                print(f"✗ 错误: {e}")
+                return False
+
+        return await asyncio.to_thread(func)
+
+    async def detect_video_len(
+        self, video: str
+    ) -> Annotated[int, "视频时长（整数秒）"]:
         path = await self.get_file_path(video)
 
         def func():
