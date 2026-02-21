@@ -116,13 +116,13 @@ class VideoFlowWorkflow:
             ]
             edited_videos = await asyncio.gather(*task_list)
             for edited_video, total_list in zip(edited_videos, state.video_time_slice):
-                edited_name = "edited" + total_list[2]
+                edited_name = "edited" + total_list[1]
                 if edited_video.content is None:
-                    raise ValueError(f"视频编辑失败, 视频url: {total_list[2]}")
+                    raise ValueError(f"视频编辑失败, 视频url: {total_list[1]}")
                 content = cast(str, edited_video.content)
                 await write_file(edited_name, content)
                 total_list.append(edited_name)
-            new_video = await video_processor.composite_video(
+            new_video = await video_processor.concatenate_video(
                 state.video_time_slice, state.video_url
             )
             state.result = new_video

@@ -173,15 +173,19 @@ class VideoProcessor(file_processor):
         video_list:[[[start_sec,end_sec],sliced-video,edited-sliced-video]]
         original_video: 原视频
         """
+        temp_new_name = original_video
+        temp_original_video = original_video
         for item in video_list:
+            temp_new_name = "ed" + temp_new_name
             await self.simple_concatenate_video(
-                original_video,
+                temp_original_video,
                 item[2],
-                "edited" + original_video,
+                temp_new_name,
                 item[0][0],
                 item[0][1],
             )
-        return "edited" + original_video
+            temp_original_video = temp_new_name
+        return temp_new_name
 
     async def simple_concatenate_video(
         self,
@@ -204,6 +208,38 @@ class VideoProcessor(file_processor):
                 # 计算新视频使用时长
                 new_duration = end_sec - start_sec
 
+                # 获取原视频信息
+                probe_original = ffmpeg.probe(original_path)
+                original_duration = float(probe_original["format"]["duration"])
+
+                # 获取原视频参数
+                video_stream_original = next(
+                    (
+                        stream
+                        for stream in probe_original["streams"]
+                        if stream["codec_type"] == "video"
+                    ),
+                    None,
+                )
+                original_width = int(video_stream_original["width"])
+                original_height = int(video_stream_original["height"])
+                original_fps = (
+                    eval(video_stream_original["r"])
+                    if "r" in video_stream_original
+                    else 30.0
+                )
+
+                # 获取新视频信息
+                probe_new = ffmpeg.probe(new_path)
+                video_stream_new = next(
+                    (
+                        stream
+                        for stream in probe_new["streams"]
+                        if stream["codec_type"] == "video"
+                    ),
+                    None,
+                )
+
                 # 读取原视频
                 original = ffmpeg.input(original_path)
 
@@ -213,15 +249,17 @@ class VideoProcessor(file_processor):
                 else:
                     part1 = None
 
-                # 读取新视频片段
-                new_video = ffmpeg.input(new_path)
-                part2 = new_video.trim(
-                    start=new_start_sec, duration=new_duration
-                ).setpts("PTS-STARTPTS")
+                # 读取新视频片段并统一参数
+                new_video_stream = ffmpeg.input(new_path)
+                part2 = (
+                    new_video_stream.trim(start=new_start_sec, duration=new_duration)
+                    .setpts("PTS-STARTPTS")
+                    .filter("scale", original_width, original_height)  # 统一分辨率
+                    .filter("setsar", "1/1")  # 统一像素宽高比
+                    .filter("fps", fps=original_fps)  # 统一帧率
+                )
 
                 # 获取原视频后段（end_sec到结束）
-                probe = ffmpeg.probe(original_path)
-                original_duration = float(probe["format"]["duration"])
                 if end_sec < original_duration:
                     part3 = original.trim(start=end_sec).setpts("PTS-STARTPTS")
                 else:
@@ -239,17 +277,44 @@ class VideoProcessor(file_processor):
                     # 如果只有一段，直接输出
                     output_stream = inputs[0]
                 else:
-                    # 多段拼接
-                    output_stream = ffmpeg.concat(*inputs, v=1, a=1)
+                    # 多段拼接 - 只拼接视频流（因为新视频可能无音频）
+                    output_stream = ffmpeg.concat(*inputs, v=1, a=0)
 
-                # 输出
-                (ffmpeg.output(output_stream, output_path).overwrite_output().run())
+                # 音频处理：使用原视频完整音频（可选）
+                # 或者添加静音音频
+                if "audio" in [
+                    stream["codec_type"] for stream in probe_original["streams"]
+                ]:
+                    # 方法1：使用原视频完整音频
+                    audio_stream = original.audio
+                else:
+                    # 方法2：添加静音音频
+                    audio_stream = ffmpeg.input("anullsrc", f="lavfi").filter(
+                        "atrim", duration=original_duration
+                    )
+
+                # 输出 - 合并视频和音频
+                (
+                    ffmpeg.output(
+                        output_stream,
+                        audio_stream,
+                        output_path,
+                        vcodec="libx264",
+                        acodec="aac",
+                        shortest=None,
+                    )  # 以视频流结束为准
+                    .overwrite_output()
+                    .run()
+                )
 
                 print(f"✓ 简单替换完成: {output_path}")
                 return True
 
             except Exception as e:
                 print(f"✗ 错误: {e}")
+                import traceback
+
+                traceback.print_exc()
                 return False
 
         return await asyncio.to_thread(func)
