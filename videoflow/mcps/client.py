@@ -13,7 +13,6 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 from mcp.shared.message import SessionMessage
 from mcp.client.streamable_http import (
     GetSessionIdCallback,
-    streamable_http_client,
     streamablehttp_client,
 )
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
@@ -123,19 +122,22 @@ class _MCPServerWithClientSession(MCPServer, ABC):
         """Connect to the server."""
         connection_succeeded = False
         transport = await self.exit_stack.enter_async_context(self.create_streams())
+
         # streamablehttp_client returns (read, write, get_session_id)
         # sse_client returns (read, write)
+        # async with self.create_streams() as transport:
         read, write, *_ = transport
 
-        session = await asyncio.to_thread(
-            ClientSession,
-            read,
-            write,
-            (
-                timedelta(seconds=self.client_session_timeout_seconds)
-                if self.client_session_timeout_seconds
-                else None
-            ),
+        session = await self.exit_stack.enter_async_context(
+            ClientSession(
+                read,
+                write,
+                (
+                    timedelta(seconds=self.client_session_timeout_seconds)
+                    if self.client_session_timeout_seconds
+                    else None
+                ),
+            )
         )
         server_result = await session.initialize()
         self.server_initialize_result = server_result
@@ -205,6 +207,7 @@ class _MCPServerWithClientSession(MCPServer, ABC):
 
     async def cleanup(self):
         """Cleanup the server."""
+        await self.exit_stack.aclose()
         if self.session:
             del self.session
             gc.collect()
@@ -285,3 +288,17 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
     def name(self) -> str:
         """A readable name for the server."""
         return self._name
+
+
+async def test_streamable_http():
+    async with MCPServerStreamableHttp(
+        params={"url": "http://127.0.0.1:18060/mcp", "timeout": 9999},
+        name="xiaohongshu-mcp",
+    ) as mcp_server:
+        print("nameaaaaa:", mcp_server.name)
+        tool = await mcp_server.list_tools()
+        print(tool)
+
+
+if __name__ == "__main__":
+    asyncio.run(test_streamable_http())
