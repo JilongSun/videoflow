@@ -179,7 +179,7 @@ class _MCPServerWithClientSession(MCPServer, ABC):
         try:
             if meta is None:
                 return await self.session.call_tool(tool_name, arguments)
-            return await self.session.call_tool(tool_name, arguments, meta=meta)
+            return await self.session.call_tool(tool_name, arguments)
         except Exception as e:
             raise e
 
@@ -245,7 +245,7 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
         self,
         params: MCPServerStreamableHttpParams,
         name: str | None = None,
-        client_session_timeout_seconds: float | None = 5,
+        client_session_timeout_seconds: float | None = 9999,
     ):
         """Create a new MCP server based on the Streamable HTTP transport."""
         super().__init__(
@@ -295,10 +295,8 @@ async def test_streamable_http():
         params={"url": "http://127.0.0.1:18060/mcp", "timeout": 9999},
         name="xiaohongshu-mcp",
     ) as mcp_server:
-        print("nameaaaaa:", mcp_server.name)
         tool = await mcp_server.list_tools()
         print(tool)
-
 
 if __name__ == "__main__":
     asyncio.run(test_streamable_http())

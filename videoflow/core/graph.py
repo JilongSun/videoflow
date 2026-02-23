@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional, List, TypedDict, Annotated, Union, cast, Tuple
+from mcp.types import TextContent
 from langgraph.graph import StateGraph, END, MessagesState, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
@@ -15,6 +16,7 @@ from videoflow.utils.file_processor import (
     video_processor,
 )
 from videoflow.utils.crawlers.crawler import crawler
+from videoflow.mcps.client import MCPServerStreamableHttp
 from .chatmodel import gen4aleph, qwen3vl_dashchat
 from ..feishu.utils import (
     get_tenant_access_token,
@@ -56,6 +58,10 @@ class VideoEditState(BaseModel):
         "[[[start_sec,end_sec],sliced-video,edited-sliced-video]]",
     ] = None
     result: Optional[str] = None
+    complete: Annotated[
+        Optional[bool],
+        "是否完成视频编辑工作流",
+    ] = None
     # model_config = {"extra": "allow"}
 
 
@@ -77,6 +83,7 @@ class VideoFlowWorkflow:
         self.graph.add_node("search_video", self.search_video)
         self.graph.add_node("select_video", self.select_video)
         self.graph.add_node("split_video", self.split_video)
+        self.graph.add_node("update_redbook", self.update_redbook)
         self.graph.add_edge(START, "download_image")
         self.graph.add_conditional_edges(
             "download_image",
@@ -85,7 +92,8 @@ class VideoFlowWorkflow:
         self.graph.add_edge("search_video", "select_video")
         self.graph.add_edge("select_video", "split_video")
         self.graph.add_edge("split_video", "object_replace")
-        self.graph.add_edge("object_replace", END)
+        self.graph.add_edge("object_replace", "update_redbook")
+        self.graph.add_edge("update_redbook", END)
 
     async def object_replace(self, state: VideoEditState) -> VideoEditState:
         """开始节点,初始化状态"""
@@ -132,6 +140,40 @@ class VideoFlowWorkflow:
                 "group",
                 state.message_id,
             )
+        return state
+
+    async def update_redbook(self, state: VideoEditState) -> VideoEditState:
+        """更新用户的小红书"""
+        if state.message_id is None:
+            raise ValueError("如果是通过飞书分享链接，则需要message_id来更新小红书")
+        if state.result is None:
+            raise ValueError("上传小红书时结果不能为空")
+        async with MCPServerStreamableHttp(
+            params={"url": "http://127.0.0.1:18060/mcp", "timeout": 9999},
+            name="xiaohongshu-mcp",
+        ) as mcp_server:
+            temp_a = await mcp_server.call_tool("check_login_status", None)
+            temp_b = cast(TextContent, temp_a.content[0])
+            text = cast(str, temp_b.text)
+            if not "已登录" in text:
+                log.error("小红书登录失败, 请先登录小红书")
+                send_message_id = await asyncio.to_thread(
+                    send_message,
+                    state.result + "小红书未登录，请手动上传",
+                    "group",
+                    state.message_id,
+                )
+            else:
+                log.info("小红书已登录")
+                args = {
+                    "content": state.result,
+                    "title": "视频编辑",
+                    "video": await get_file_path(state.result),
+                }
+                temp_a = await mcp_server.call_tool("publish_with_video", args)
+                temp_b = cast(TextContent, temp_a.content[0])
+                text = cast(str, temp_b.text)
+                log.info(f"小红书上传成功, 视频id: {text}")
         return state
 
     async def download_image(self, state: VideoEditState) -> VideoEditState:
@@ -244,7 +286,7 @@ class VideoFlowWorkflow:
                         log.error(f"下载视频失败, 视频url: {content}")
                         raise Exception(f"下载视频失败, 视频url: {content}")
                     state_out = Command(resume=state.message_id + ".mp4")
-            elif chunk["result"] is not None:
+            elif chunk["complete"] is not None:
                 break
         return chunk
 
