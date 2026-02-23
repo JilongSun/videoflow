@@ -7,7 +7,7 @@ from langchain_core.outputs import ChatResult, Generation, ChatGeneration
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, BaseMessage, AIMessage
+from langchain_core.messages import HumanMessage, BaseMessage, AIMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from pydantic import Field, BaseModel
 from typing import (
@@ -28,6 +28,7 @@ from .settings import (
     gen4aleph_runway,
     qwen_dashscope,
     ModelSettings,
+    qwen3vl_dashscope,
 )
 from videoflow.utils.file_processor import write_file, read_file, get_file_path
 from videoflow.utils.file_processor import (
@@ -41,6 +42,8 @@ from langchain_core.language_models.base import (
     LanguageModelInput,
 )
 from videoflow.utils import log
+from dashscope import MultiModalConversation, AioMultiModalConversation
+import dashscope
 from abc import ABC, abstractmethod
 from runwayml import RunwayML
 from pathlib import Path
@@ -345,7 +348,9 @@ class Gen4AlephRunway(VideoEditBase):
         elif file_name.startswith(("http", "https")):
             raise ValueError("runway模型只支持runway://开头的uri")
         file = await get_file_path(file_name)
-        response = self.client.uploads.create_ephemeral(file=Path(file),timeout=self.timeout)
+        response = self.client.uploads.create_ephemeral(
+            file=Path(file), timeout=self.timeout
+        )
         return response.uri
 
 
@@ -441,6 +446,61 @@ class QwenDashscopeChat(VideoEditBase):
             **kwargs,
         )
 
+
+class Qwen3vlDashscope(VideoEditBase):
+    async def ainvoke(  # type: ignore
+        self,
+        input: Dict[str, str],
+        config: RunnableConfig | None = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> AIMessage:
+        temp = json.dumps(input)
+        return await super().ainvoke(temp, config, stop=stop, **kwargs)
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        temp = cast(str, messages[0].content)
+        data = json.loads(temp)
+        video = data["video"]
+        object = data["object"]
+        local_path = await get_file_path(video)
+        video_path = f"file://{local_path}"
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"video": video_path, "fps": 2},
+                    {
+                        "text": f"""你是一位视频编辑工作流的视频分析师，由于视频编辑大模型只能处理5秒的视频!!!(注意最多只有5秒！！！)，因此，你需要说出视频中{object}出现的开始时间和结束时间.
+                     由于你只能看到一些帧数的图片，因此，当看到一些非整数时间时，可以扩大时间，要求结构化输出，结构如下:
+                     由列表套列表的形式[[开始时间, 结束时间], [开始时间, 结束时间], ...]（结束时间和开始时间的差值最大5秒！！！），最后一段可以小于5秒，比如一个13秒的视频，{object}在第1.2秒出现直到结束，可以返回：
+                     [[1,6],[6,11],[11,13]],只能返回结果，不能返回任何思考及中间过程"""
+                    },
+                ],
+            }
+        ]  # type: ignore
+        response = await AioMultiModalConversation.call(
+            api_key=self.api_key,  # type: ignore
+            model=self.model_name,
+            messages=messages,
+        )
+        res = response.output.choices[0].message.content[0]["text"]  # type: ignore
+        log.info(f"qwen3vl_dashscope返回结果: {res}")
+        return ChatResult(
+            generations=[
+                ChatGeneration(message=BaseMessage(content=res, type="qwen3vl"))
+            ]
+        )
+
+
+qwen3vl_dashchat = Qwen3vlDashscope(**qwen3vl_dashscope.model_dump())
 
 runway = RunwayAit8(**runway_ait8.model_dump())
 

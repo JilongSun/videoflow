@@ -97,10 +97,6 @@ class PlatformConfig(MySettings):
 class ModelSettings(PlatformConfig):
     model_name: str = Field(..., description="模型名称")
     end_point: str = Field(..., description="API 路由")
-    prompt: Annotated[
-        Optional[str],
-        Field(None, description="不同模型需要不同的提示词，这直接关系到输入"),
-    ] = None
 
 
 # 创建全局配置实例
@@ -147,11 +143,13 @@ qwen_dashscope = ModelSettings(
     model_name="qwen-plus",
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     end_point="使用openai兼容格式不需要end_point",
-    prompt="""你是ai助手，你需要根据用户的问题，调用自己做持有的工具或者工作流，来解决用户的需求，或者回答用户的一些日常问题。
-    作为一名助手，说话要谨慎简介，只能回答自己能力范围的时候，只能按照自己所拥有的工具的能力来回答.
-    同时你在执行每一步时都要告诉用户你在干什么，比如在调用工具时，你需要告诉用户你调用什么工具，在你觉得缺少调用工具的参数时，也可以先询问用户你缺少什么参数
-    用户提问内容最后的message_id，是系统自动添加的，用来启动一些工作流的参数，用户不知道，不用询问
-    """,
+)
+
+qwen3vl_dashscope = ModelSettings(
+    platform_name="dashscope",
+    if_taskid=False,
+    model_name="qwen3-vl-plus",
+    end_point="使用dashscope不需要end_point",
 )
 
 __all__ = [
@@ -159,5 +157,6 @@ __all__ = [
     "wanx_dashscpoe",
     "gen4aleph_runway",
     "qwen_dashscope",
+    "qwen3vl_dashscope",
     "ModelSettings",
 ]
