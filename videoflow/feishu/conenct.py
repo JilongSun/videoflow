@@ -1,7 +1,7 @@
 # 加载 .env 文件中的环境变量
 import os, asyncio
 from dotenv import load_dotenv
-
+from videoflow.utils import log
 load_dotenv()
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
@@ -59,10 +59,15 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
                 "feishu": [data.event.message.chat_type, data.event.message.message_id], # type: ignore
             },
             timeout=999999,
+            trust_env=False,
         )
 
+        log.info(f"已发送请求到后端，消息内容：{content},missage_id: {data.event.message.message_id}") # type: ignore
     if data.event.message.parent_id is None and data.event.message.root_id is None: # type: ignore
+        log.info(f"准备请求到后端，消息内容：{content},missage_id: {data.event.message.message_id}") # type: ignore
         asyncio.create_task(func())
+    else:
+        log.info(f"收到消息，但不是新消息，已忽略，消息内容：{content},missage_id: {data.event.message.message_id}") # type: ignore
 
 
 # 注册事件回调
