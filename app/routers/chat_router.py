@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from videoflow.core.agents import supervised_agent
 from ..models.router_model import Chat2Model
 from videoflow.utils import log
-from langchain.messages import HumanMessage
+from langchain.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 __all__ = ["router"]
@@ -28,13 +28,14 @@ async def chat_endpoint(
         res = await supervised_agent.ainvoke(
             {
                 "messages": [
+                    SystemMessage(content=f"飞书message_id为{id.message_id}"),
                     HumanMessage(
                         content=request.content + f"message_id: {id.message_id}"
-                    )
+                    ),
                 ]
             },
-            config, # type: ignore
-            context=id, # type: ignore
+            config,  # type: ignore
+            context=id,  # type: ignore
         )
     else:
         res = await supervised_agent.ainvoke(
