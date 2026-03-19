@@ -19,13 +19,13 @@ async def lifespan(app: FastAPI):
     await amain()
     log.info("飞书连接端口启动成功")
     yield
-    print("关闭应用")
+    log.info("关闭应用")
 
 
 app = FastAPI(
     title="VideoFlow API",
     description="A FastAPI application for VideoFlow project",
-    version="1.0.0",
+    version="1.1.2",
     lifespan=lifespan,
 )
 

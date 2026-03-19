@@ -102,6 +102,7 @@ class VideoFlowWorkflow:
         if state.message_id is None:
             raise ValueError("如果是通过飞书分享链接，则需要message_id来返回消息")
         if not state.video_time_slice:
+            log.info("视频无需分割，直接替换对象,开始编辑视频,视频url: " + state.video_url)
             res = await gen4aleph.ainvoke(
                 [state.image_url],
                 state.video_url,
@@ -118,6 +119,7 @@ class VideoFlowWorkflow:
             await write_file("edited" + state.video_url, state.result)
 
         elif state.video_time_slice:
+            log.info("视频需要分割，替换对象,开始编辑视频,视频url: " + state.video_url)
             task_list = [
                 asyncio.create_task(gen4aleph.ainvoke([state.image_url], video_url[1]))
                 for video_url in state.video_time_slice
