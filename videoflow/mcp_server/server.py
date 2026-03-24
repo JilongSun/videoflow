@@ -12,4 +12,4 @@ def run_server():
     """启动 MCP Server（Streamable HTTP transport）"""
     server = create_mcp_server()
     log.info("启动 VideoFlow MCP Server: http://127.0.0.1:18070/mcp")
-    server.run(transport="streamable-http", host="127.0.0.1", port=18070)
+    server.run(transport="streamable-http")

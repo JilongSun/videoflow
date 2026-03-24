@@ -88,7 +88,9 @@ class VideoFlowWorkflow:
         if state.video_url is None:
             raise ValueError("视频url不能为空")
         if not state.video_time_slice:
-            log.info("视频无需分割，直接替换对象,开始编辑视频,视频url: " + state.video_url)
+            log.info(
+                "视频无需分割，直接替换对象,开始编辑视频,视频url: " + state.video_url
+            )
             res = await gen4aleph.ainvoke(
                 [state.image_url],
                 state.video_url,
@@ -197,11 +199,7 @@ class VideoFlowWorkflow:
         调用方选择后通过 resume() 恢复工作流。
         """
         session_id = state.session_id or str(uuid.uuid4())
-        config = {
-            "configurable": {
-                "thread_id": session_id
-            }
-        }
+        config = {"configurable": {"thread_id": session_id}}
         state_out: Union[VideoEditState, Command] = state
 
         async def process(state_in: Union[VideoEditState, Command]):
@@ -223,36 +221,10 @@ class VideoFlowWorkflow:
         """
         恢复中断的工作流，传入用户选择的视频文件名。
         """
-        config = {
-            "configurable": {
-                "thread_id": session_id
-            }
-        }
+        config = {"configurable": {"thread_id": session_id}}
         state_out = Command(resume=selected_video_file)
         chunk = await self.workflow.ainvoke(state_out, config)  # type: ignore
         return chunk
 
 
-class WorkFlowManager:
-    def __init__(self):
-        self._workflow = []
-
-    def __call__(self):
-        return self._workflow
-
-    def get_num(self):
-        """
-        返回工作流数量
-        """
-        return len(self._workflow)
-
-    def add_workflow(self, workflow: VideoFlowWorkflow):
-        """
-        添加工作流
-        """
-        self._workflow.append(workflow)
-
-
 video_flow_workflow = VideoFlowWorkflow()
-workflow_manager = WorkFlowManager()
-workflow_manager.add_workflow(video_flow_workflow)

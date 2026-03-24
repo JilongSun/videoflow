@@ -18,6 +18,7 @@ mcp = FastMCP(
     instructions="VideoFlow 是一个 AI 视频编辑工作流 MCP 服务。"
     "支持视频搜索、下载、AI分析、分割、编辑（Runway Gen4Aleph）和拼接。"
     "可以单独调用各个工具，也可以通过 run_video_workflow 执行完整工作流。",
+    port=18070,
 )
 
 
