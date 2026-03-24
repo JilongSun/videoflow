@@ -2,30 +2,33 @@
 
 ## 架构概览
 
-VideoFlow 是一个 AI 驱动的视频自动化工作流系统。核心流程：用户（通过飞书或 API）发起任务 → LangChain Agent 调度 → LangGraph 工作流执行视频搜索/编辑/发布。
+VideoFlow 是一个 AI 驱动的视频自动化工作流系统，以 **MCP Server** 形式对外提供视频搜索/编辑能力，供任意 Agent 调用。
 
 ```
-飞书 WebSocket ─→ FastAPI ─→ LangChain Agent ─→ LangGraph Workflow
-                                                    │
-                              ┌─────────────────────┼─────────────────────┐
-                              ↓                     ↓                     ↓
-                      抖音爬虫/下载          AI 视频编辑              MCP 小红书发布
-                      (TikHub SDK)      (Runway Gen4Aleph)      (Streamable HTTP)
+外部 Agent ──→ MCP Server (18070) ──→ core/tools/* ──→ 业务逻辑
+                                          │
+                        ┌─────────────────┼─────────────────┐
+                        ↓                 ↓                 ↓
+                  抖音爬虫/下载      AI 视频编辑        视频分析/处理
+                  (TikHub SDK)   (Runway Gen4Aleph)   (Qwen3-VL + FFmpeg)
+
+Demo (飞书+FastAPI) ──→ MCP Client ──→ MCP Server
 ```
 
 ### 核心模块
 
 | 模块 | 职责 |
 |------|------|
-| `videoflow/core/settings.py` | 配置管理，`MySettings` → `PlatformConfig` → `ModelSettings` 层级，动态从 `.env` 读取 `{PLATFORM}_API_KEY` |
+| `videoflow/mcp_server/server.py` | MCP Server 启动入口（Streamable HTTP, port 18070） |
+| `videoflow/mcp_server/tools.py` | MCP Tool 注册（薄壳，调用 core/tools） |
+| `videoflow/core/tools/` | 全部业务逻辑：search、download、analyze、edit |
+| `videoflow/core/settings.py` | 配置管理，`MySettings` → `PlatformConfig` → `ModelSettings` 层级 |
 | `videoflow/core/chatmodel.py` | 自定义 LangChain `BaseChatModel` 实现，封装 Runway、DashScope 等 AI 模型 |
-| `videoflow/core/agents.py` | LangChain `create_agent` + `@after_model` 中间件，主入口 `supervised_agent` |
-| `videoflow/core/graph.py` | LangGraph 6 节点状态机：download_image → search_video → select_video → split_video → object_replace → update_redbook |
-| `videoflow/feishu/` | 飞书 WebSocket 长连接 + REST API（消息收发、图片下载、轮询回复） |
-| `videoflow/mcps/client.py` | MCP 客户端，连接小红书 MCP 服务（`http://127.0.0.1:18060/mcp`） |
+| `videoflow/core/graph.py` | LangGraph 5 节点状态机：download_image → search_video → select_video → split_video → object_replace |
+| `videoflow/mcps/client.py` | MCP 客户端基类（供 demo 或其他模块使用） |
 | `videoflow/utils/file_processor/` | Provider 模式的文件处理器（图片/视频/文档），输出到 `outputs/` |
 | `videoflow/utils/crawlers/` | TikHub API 封装，抖音视频搜索与下载 |
-| `app/` | FastAPI 应用，路由分为 `chat_router`（Agent 入口）和 `util_router`（文件/搜索工具） |
+| `videoflow/demo/` | 测试演示模块（飞书 WebSocket + LangChain Agent + FastAPI） |
 
 ## 构建与运行
 
@@ -36,14 +39,15 @@ uv venv && uv sync
 # 配置环境变量
 cp .env.example .env
 # 必填：DASHSCOPE_API_KEY, RUNWAY_API_KEY, AIT8_API_KEY, TIKHUB_API_KEY
-# 必填：N8N_BINARY_PATH, CONTAINER_ID（飞书）
+# 必填：N8N_BINARY_PATH
 
-# 启动服务
+# 启动 MCP Server（主入口）
 python main.py
-# API: http://127.0.0.1:8000  |  文档: http://127.0.0.1:8000/docs
+# MCP: http://127.0.0.1:18070/mcp
 
-# 可选：启动小红书 MCP 服务
-# .miscellaneous/xiaohongshu-mcp/xiaohongshu-mcp-windows-amd64.exe
+# 启动 Demo（飞书+Agent+FastAPI，需先启动 MCP Server）
+python demo_main.py
+# API: http://127.0.0.1:8000  |  文档: http://127.0.0.1:8000/docs
 ```
 
 ## 测试
@@ -67,5 +71,7 @@ python test.py
 
 - Runway Gen4Aleph 限制视频 ≤5 秒，较长视频会自动分片处理后拼接
 - LangGraph 使用 `MemorySaver`（内存检查点），重启后状态丢失
-- 飞书轮询回复间隔 10 秒，无退避策略
-- 工作流中断后通过 `Command(resume=...)` 恢复，详见 `graph.py` 的 `select_video` 节点
+- 工作流 `select_video` 中断时返回候选列表给调用方，通过 `resume()` 恢复
+- MCP Server 端口 18070，Demo FastAPI 端口 8000
+- Demo 模块的飞书轮询回复间隔 10 秒，无退避策略
+- 小红书发布功能已剥离，作为独立 MCP 服务（端口 18060）供 Agent 直接调用

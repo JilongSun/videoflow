@@ -1,6 +1,6 @@
 from .base import file_processor
 from videoflow.utils.logger_config import log
-from app.models.router_model import file_content
+from .base import file_content
 from pathlib import Path
 from typing import Optional
 import os, aiofiles, base64

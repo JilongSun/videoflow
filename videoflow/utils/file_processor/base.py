@@ -1,9 +1,11 @@
 import os, aiofiles, httpx, base64
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import TypeVar, Awaitable, Any, Optional, Annotated
-from app.models.router_model import file_content
+from typing import TypeVar, Awaitable, Any, Optional, Annotated, Union
 from videoflow.utils import log
+
+# file_content: URL / base64 / filesystem-v2 路径，本质都是 str
+file_content = Union[str, bytes]
 
 FP = TypeVar("FP", bound="file_processor")
 

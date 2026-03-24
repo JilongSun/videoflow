@@ -1,7 +1,7 @@
 from .base import file_processor
 from pathlib import Path
 from typing import Optional, cast
-from app.models.router_model import file_content
+from .base import file_content
 from videoflow.utils.logger_config import log
 import os, aiofiles, httpx, base64, ffmpeg, asyncio
 import numpy as np

@@ -1,7 +1,7 @@
 from .base import file_processor
 from pathlib import Path
 from typing import Optional, cast, Tuple, Annotated, Union, List
-from app.models.router_model import file_content
+from .base import file_content
 from videoflow.utils.logger_config import log
 from videoflow.utils.downloader.apis.api_client import MainAPIClient
 from videoflow.utils.downloader.core.downloader import VideoDownloader

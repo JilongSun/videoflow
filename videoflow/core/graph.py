@@ -1,11 +1,8 @@
-from typing import Dict, Any, Optional, List, TypedDict, Annotated, Union, cast, Tuple
-from mcp.types import TextContent
-from langgraph.graph import StateGraph, END, MessagesState, START, END, add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
+from typing import Dict, Any, Optional, List, Annotated, Union, cast
+from langgraph.graph import StateGraph, END, START, add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt, Command
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, AnyMessage
-from langchain_core.tools import tool
 from langchain_core.output_parsers import StrOutputParser
 from videoflow.utils import log
 from pydantic import BaseModel, Field
@@ -16,15 +13,8 @@ from videoflow.utils.file_processor import (
     video_processor,
 )
 from videoflow.utils.crawlers.crawler import crawler
-from videoflow.mcps.client import MCPServerStreamableHttp
 from .chatmodel import gen4aleph, qwen3vl_dashchat
-from ..feishu.utils import (
-    get_tenant_access_token,
-    download_image_fromfeishu,
-    polling_reply_message,
-    send_message,
-)
-import asyncio, json, os, httpx, uuid
+import asyncio, json, uuid, httpx
 
 
 class VideoEditState(BaseModel):
@@ -36,15 +26,15 @@ class VideoEditState(BaseModel):
     messages: Annotated[list[AnyMessage], add_messages]
     image_url: str = Field(
         ...,
-        description="用户上传的图片url或者飞书imagekey,或者本地图片，当用户是通过飞书调用时，只通过聊天框发送图片",
+        description="用户上传的图片url（HTTP）或本地图片文件名",
     )
     video_keyword: str = Field(
         ...,
-        description="用户输入的视频关键词, 用于视频搜索，用户在调用大模型时要提供搜索关键字",
+        description="用户输入的视频关键词, 用于视频搜索",
     )
-    message_id: str = Field(
-        ...,
-        description="如果是通过飞书发送消息的，则需要message_id来返回消息",
+    session_id: str = Field(
+        default="",
+        description="工作流会话ID，用于标识和恢复工作流",
     )
     video_url: Annotated[
         Optional[str],
@@ -83,7 +73,6 @@ class VideoFlowWorkflow:
         self.graph.add_node("search_video", self.search_video)
         self.graph.add_node("select_video", self.select_video)
         self.graph.add_node("split_video", self.split_video)
-        self.graph.add_node("update_redbook", self.update_redbook)
         self.graph.add_edge(START, "download_image")
         self.graph.add_conditional_edges(
             "download_image",
@@ -92,15 +81,12 @@ class VideoFlowWorkflow:
         self.graph.add_edge("search_video", "select_video")
         self.graph.add_edge("select_video", "split_video")
         self.graph.add_edge("split_video", "object_replace")
-        self.graph.add_edge("object_replace", "update_redbook")
-        self.graph.add_edge("update_redbook", END)
+        self.graph.add_edge("object_replace", END)
 
     async def object_replace(self, state: VideoEditState) -> VideoEditState:
-        """开始节点,初始化状态"""
+        """AI 视频编辑：替换视频中的物体"""
         if state.video_url is None:
             raise ValueError("视频url不能为空")
-        if state.message_id is None:
-            raise ValueError("如果是通过飞书分享链接，则需要message_id来返回消息")
         if not state.video_time_slice:
             log.info("视频无需分割，直接替换对象,开始编辑视频,视频url: " + state.video_url)
             res = await gen4aleph.ainvoke(
@@ -110,13 +96,7 @@ class VideoFlowWorkflow:
             if res.content is None:
                 raise ValueError("视频编辑失败")
             state.result = cast(str, res.content)
-            send_message_id = await asyncio.to_thread(
-                send_message,
-                state.result + "这是你编辑后的视频",
-                "group",
-                state.message_id,
-            )
-            await write_file("edited" + state.video_url, state.result)
+            await write_file("edited_" + state.video_url, state.result)
 
         elif state.video_time_slice:
             log.info("视频需要分割，替换对象,开始编辑视频,视频url: " + state.video_url)
@@ -126,7 +106,7 @@ class VideoFlowWorkflow:
             ]
             edited_videos = await asyncio.gather(*task_list)
             for edited_video, total_list in zip(edited_videos, state.video_time_slice):
-                edited_name = "edited" + total_list[1]
+                edited_name = "edited_" + total_list[1]
                 if edited_video.content is None:
                     raise ValueError(f"视频编辑失败, 视频url: {total_list[1]}")
                 content = cast(str, edited_video.content)
@@ -136,61 +116,25 @@ class VideoFlowWorkflow:
                 state.video_time_slice, state.video_url
             )
             state.result = new_video
-            send_message_id = await asyncio.to_thread(
-                send_message,
-                state.result + "这是你编辑后的视频,在电脑本地",
-                "group",
-                state.message_id,
-            )
-        return state
-
-    async def update_redbook(self, state: VideoEditState) -> VideoEditState:
-        """更新用户的小红书"""
-        if state.message_id is None:
-            raise ValueError("如果是通过飞书分享链接，则需要message_id来更新小红书")
-        if state.result is None:
-            raise ValueError("上传小红书时结果不能为空")
-        async with MCPServerStreamableHttp(
-            params={"url": "http://127.0.0.1:18060/mcp", "timeout": 9999},
-            name="xiaohongshu-mcp",
-        ) as mcp_server:
-            temp_a = await mcp_server.call_tool("check_login_status", None)
-            temp_b = cast(TextContent, temp_a.content[0])
-            text = cast(str, temp_b.text)
-            if not "已登录" in text:
-                log.error("小红书登录失败, 请先登录小红书")
-                send_message_id = await asyncio.to_thread(
-                    send_message,
-                    state.result + "小红书未登录，请手动上传",
-                    "group",
-                    state.message_id,
-                )
-            else:
-                log.info("小红书已登录")
-                args = {
-                    "content": state.result,
-                    "title": "视频编辑",
-                    "video": await get_file_path(state.result),
-                }
-                temp_a = await mcp_server.call_tool("publish_with_video", args)
-                temp_b = cast(TextContent, temp_a.content[0])
-                text = cast(str, temp_b.text)
-                log.info(f"小红书上传成功, 视频id: {text}")
+        state.complete = True
         return state
 
     async def download_image(self, state: VideoEditState) -> VideoEditState:
-        """下载用户上传的图片"""
-        if state.image_url.startswith("img_v3") or state.image_url.endswith(".webp"):
-            if state.message_id is None:
-                raise ValueError("如果是通过飞书分享链接，则需要message_id来下载图片")
-            else:
-                res = await download_image_fromfeishu(state.message_id, state.image_url)
-                success = await write_file(state.image_url + ".webp", res)
-                if not success:
-                    log.error(f"写入图片到本地失败, 图片key: {state.image_url}")
-                    raise Exception(f"写入图片到本地失败, 图片key: {state.image_url}")
-                log.info(f"写入图片到本地成功, 图片key: {state.image_url}")
-                state.image_url = state.image_url + ".webp"
+        """下载用户上传的图片，支持 HTTP URL 或本地文件"""
+        if state.image_url.startswith(("http://", "https://")):
+            async with httpx.AsyncClient() as client:
+                response = await client.get(state.image_url, timeout=300)
+                response.raise_for_status()
+            # 从 URL 提取文件名
+            url_path = state.image_url.split("?")[0].split("/")[-1]
+            file_name = url_path if "." in url_path else url_path + ".webp"
+            success = await write_file(file_name, response.content)
+            if not success:
+                raise Exception(f"写入图片到本地失败: {file_name}")
+            log.info(f"下载图片成功: {file_name}")
+            state.image_url = file_name
+        else:
+            log.info(f"使用本地图片: {state.image_url}")
         return state
 
     async def search_video(self, state: VideoEditState) -> VideoEditState:
@@ -213,8 +157,6 @@ class VideoFlowWorkflow:
         """根据用户输入的时间范围, 分割视频"""
         if state.video_url is None:
             raise ValueError("视频url不能为空")
-        if state.message_id is None:
-            raise ValueError("如果是通过飞书分享链接，则需要message_id来返回消息")
         if isinstance(state.video_url, list):
             raise ValueError("一次只能处理一个视频")
         sec = await video_processor.detect_video_len(state.video_url)
@@ -250,11 +192,14 @@ class VideoFlowWorkflow:
 
     async def ainvoke(self, state: VideoEditState) -> Dict[str, Any]:
         """
-        这是视频编辑工作流
+        执行视频编辑工作流。
+        当遇到 select_video 中断时，返回候选列表供调用方处理。
+        调用方选择后通过 resume() 恢复工作流。
         """
+        session_id = state.session_id or str(uuid.uuid4())
         config = {
             "configurable": {
-                "thread_id": state.message_id if state.message_id else str(uuid.uuid4())
+                "thread_id": session_id
             }
         }
         state_out: Union[VideoEditState, Command] = state
@@ -262,34 +207,29 @@ class VideoFlowWorkflow:
         async def process(state_in: Union[VideoEditState, Command]):
             return await self.workflow.ainvoke(state_in, config)  # type: ignore
 
-        while True:
-            chunk = await process(state_out)
-            if "__interrupt__" in chunk:
-                interrupt_info = chunk["__interrupt__"][0].value
-                if "provide_video_url" in interrupt_info:
-                    if state.message_id is None:
-                        raise ValueError(
-                            "如果是通过飞书分享链接，则需要message_id来返回消息"
-                        )
-                    send_message_id = await asyncio.to_thread(
-                        send_message,
-                        "\n".join(interrupt_info["provide_video_url"])
-                        + "请选择一个视频",
-                        "group",
-                        state.message_id,
-                    )
-                    temp = await polling_reply_message(send_message_id)
-                    content = json.loads(temp)["text"]
-                    content = "http" + content.split("http")[1]
-                    success, video_id = await crawler.download_video(
-                        content, file_name=state.message_id + ".mp4"
-                    )
-                    if not success:
-                        log.error(f"下载视频失败, 视频url: {content}")
-                        raise Exception(f"下载视频失败, 视频url: {content}")
-                    state_out = Command(resume=state.message_id + ".mp4")
-            elif chunk["complete"] is not None:
-                break
+        chunk = await process(state_out)
+        if "__interrupt__" in chunk:
+            interrupt_info = chunk["__interrupt__"][0].value
+            if "provide_video_url" in interrupt_info:
+                return {
+                    "status": "pending_selection",
+                    "session_id": session_id,
+                    "candidates": interrupt_info["provide_video_url"],
+                    "complete": None,
+                }
+        return chunk
+
+    async def resume(self, session_id: str, selected_video_file: str) -> Dict[str, Any]:
+        """
+        恢复中断的工作流，传入用户选择的视频文件名。
+        """
+        config = {
+            "configurable": {
+                "thread_id": session_id
+            }
+        }
+        state_out = Command(resume=selected_video_file)
+        chunk = await self.workflow.ainvoke(state_out, config)  # type: ignore
         return chunk
 
 

@@ -1,17 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import APIRouter
+from fastapi.responses import FileResponse
 from videoflow.utils.file_processor import (
     write_file,
-    read_file,
     get_file_path,
     file_processor_provider,
 )
 from videoflow.utils.crawlers.crawler import crawler
-from ..models.router_model import WriteFileRequest, ReadFileRequest, SearchVideoRequest
+from videoflow.demo.app.models.router_model import WriteFileRequest, ReadFileRequest, SearchVideoRequest
 from videoflow.utils import log
 
 __all__ = ["router"]
-
 
 router = APIRouter(prefix="/util", tags=["工具路由"])
 
@@ -22,7 +20,6 @@ async def write_file_endpoint(request: WriteFileRequest):
         f"写文件接口接受参数: 文件名：{request.file_name}, 内容：{request.content if len(request.content) < 10 else request.content[:10]}, 类型: {type(request.content)}"
     )
     res = await write_file(request.file_name, request.content, request.path)
-    print("write函数执行完毕")
     if res:
         return {"message": "File writing success"}
     else:
@@ -30,9 +27,7 @@ async def write_file_endpoint(request: WriteFileRequest):
 
 
 @router.post("/read-file")
-async def read_file_endpoint(
-    request: ReadFileRequest,
-):
+async def read_file_endpoint(request: ReadFileRequest):
     log.info(f"读文件接口接受参数: 文件名：{request.file_name}, 路径：{request.path}")
     path = await get_file_path(request.file_name, request.path)
     return FileResponse(path, media_type="image/jpeg")
@@ -52,9 +47,7 @@ async def search_video_endpoint(request: SearchVideoRequest):
 
 @router.post("/upload-file", deprecated=True)
 async def upload_file_endpoint(request: ReadFileRequest):
-    """
-    通过ait8上传文件然后获得url
-    """
+    """通过ait8上传文件然后获得url"""
     log.info(f"上传文件接口接受参数: 文件名：{request.file_name}, 路径：{request.path}")
     tf = file_processor_provider.get_processor(request.file_name)
     res = await tf.get_url(request.file_name)
