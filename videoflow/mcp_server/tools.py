@@ -15,31 +15,31 @@ mcp = FastMCP(
 
 @mcp.tool()
 async def tool_run_video_workflow(
-    image_url: str,
+    image_input: str,
     video_keyword: str,
-    video_url: Optional[str] = None,
+    video_input: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> dict:
     """执行完整的视频编辑工作流（基于 LangGraph 状态机）
 
     流程: 下载图片 → 搜索视频 → (中断返回候选列表) → 分割 → 编辑 → 拼接
 
-    当未提供 video_url 时，会搜索视频并返回候选列表，status 为 "pending_selection"。
-    此时需要调用 tool_resume_video_workflow 传入选择的视频文件名来恢复工作流。
+    当未提供 video_input 时，会搜索视频并返回候选列表，status 为 "pending_selection"。
+    此时需要调用 tool_resume_video_workflow 传入 video_input 来恢复工作流。
 
     Args:
-        image_url: 图片 HTTP URL
+        image_input: 图片来源，可以是 HTTP URL 或本地图片文件名
         video_keyword: 视频搜索关键词
-        video_url: 直接提供已下载的视频文件名，跳过搜索（可选）
+        video_input: 直接指定视频来源（HTTP URL 或本地文件名），提供后跳过搜索（可选）
         session_id: 会话 ID（可选，不提供则自动生成）
     """
     from videoflow.core.graph import VideoEditState
 
     state = VideoEditState(
-        image_url=image_url,
+        image_input=image_input,
         video_keyword=video_keyword,
         session_id=session_id or "",
-        video_url=video_url,
+        video_input=video_input,
     )
     return await video_flow_workflow.ainvoke(state)
 
@@ -47,7 +47,7 @@ async def tool_run_video_workflow(
 @mcp.tool()
 async def tool_resume_video_workflow(
     session_id: str,
-    selected_video_file: str,
+    video_input: str,
 ) -> dict:
     """恢复中断的视频编辑工作流
 
@@ -55,6 +55,6 @@ async def tool_resume_video_workflow(
 
     Args:
         session_id: 工作流会话 ID（从 tool_run_video_workflow 的返回值中获取）
-        selected_video_file: 用户选择的视频文件名（已下载到本地）
+        video_input: 用户选择的视频来源，可以是候选列表中的 HTTP URL，也可以是已下载到本地的文件名
     """
-    return await video_flow_workflow.resume(session_id, selected_video_file)
+    return await video_flow_workflow.resume(session_id, video_input)

@@ -1,3 +1,8 @@
+---
+name: videoflow-mcp
+description: 使用 VideoFlow MCP 执行完整视频编辑工作流，包含参数补全、HITL 中断处理、thread_id 会话管理与恢复执行规范。
+---
+
 # VideoFlow Agent-MCP 协作技能
 
 ## 适用场景
@@ -34,12 +39,12 @@
 - 如果出现 thread_id 不存在或已过期，提示用户重新发起任务。
 
 ## 参数最小清单（启动前）
-- `image_url`：用户提供的图片输入（HTTP URL 或已存在文件名）
+- `image_input`：用户提供的图片输入（HTTP URL 或已存在文件名）
 - `video_keyword`：视频检索关键词
-- `video_url`：可选；如果提供则可跳过候选选择环节
+- `video_input`：可选；如果提供则可跳过候选选择环节
 
 启动前检查规则：
-- 缺 `image_url`：先向用户追问图片输入
+- 缺 `image_input`：先向用户追问图片输入
 - 缺 `video_keyword`：先向用户追问关键词
 - 两者齐全后才允许调用 `tool_run_video_workflow`
 
@@ -50,9 +55,9 @@
 {
    "tool": "tool_run_video_workflow",
    "args": {
-      "image_url": "<image_url>",
+      "image_input": "<image_input>",
       "video_keyword": "<video_keyword>",
-      "video_url": "<optional_video_url_or_file>",
+      "video_input": "<optional_video_input_or_file>",
       "session_id": "<optional_session_id>"
    }
 }
@@ -74,10 +79,12 @@
    "tool": "tool_resume_video_workflow",
    "args": {
       "session_id": "<saved_session_id>",
-      "selected_video_file": "<user_selected_video_file_or_input>"
+      "video_input": "<http_url_or_local_filename>"
    }
 }
 ```
+
+> `video_input` 可以是候选列表中的 HTTP URL，也可以是已下载到本地的文件名，两者均可接受。
 
 ## 用户沟通模板（建议）
 

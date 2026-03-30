@@ -23,9 +23,9 @@ class VideoEditState(BaseModel):
     用户在启动工作流时，必须要提供抖音搜索关键词，以及用来替换的图片
     """
 
-    image_url: str = Field(
+    image_input: str = Field(
         ...,
-        description="用户上传的图片url（HTTP）或本地图片文件名",
+        description="用户上传的图片url (HTTP)或本地图片路径",
     )
     video_keyword: str = Field(
         ...,
@@ -35,11 +35,11 @@ class VideoEditState(BaseModel):
         default="",
         description="工作流会话ID，用于标识和恢复工作流",
     )
-    video_url: Annotated[
+    video_input: Annotated[
         Optional[str],
-        "用户上传的视频url或者飞书videokey或者本地视频",
+        "视频来源，可以是 HTTP URL 或本地视频文件名",
     ] = None
-    provide_video_url: Annotated[
+    provide_video_input: Annotated[
         Optional[List[str]], "从抖音上爬取的视频url列表，由用户选择一个下载"
     ] = None
     video_time_slice: Annotated[
@@ -75,7 +75,7 @@ class VideoFlowWorkflow:
         self.graph.add_edge(START, "download_image")
         self.graph.add_conditional_edges(
             "download_image",
-            lambda state: "search_video" if not state.video_url else "split_video",
+            lambda state: "search_video" if not state.video_input else "split_video",
         )
         self.graph.add_edge("search_video", "select_video")
         self.graph.add_edge("select_video", "split_video")
@@ -84,26 +84,26 @@ class VideoFlowWorkflow:
 
     async def object_replace(self, state: VideoEditState) -> VideoEditState:
         """AI 视频编辑：替换视频中的物体"""
-        if state.video_url is None:
+        if state.video_input is None:
             raise ValueError("视频url不能为空")
         if not state.video_time_slice:
             log.info(
-                "视频无需分割，直接替换对象,开始编辑视频,视频url: " + state.video_url
+                "视频无需分割，直接替换对象,开始编辑视频,视频url: " + state.video_input
             )
             res = await gen4aleph.ainvoke(
-                [state.image_url],
-                state.video_url,
+                [state.image_input],
+                state.video_input,
             )
             if res.content is None:
                 raise ValueError("视频编辑失败")
             state.result = cast(str, res.content)
-            await write_file("edited_" + state.video_url, state.result)
+            await write_file("edited_" + state.video_input, state.result)
 
         elif state.video_time_slice:
-            log.info("视频需要分割，替换对象,开始编辑视频,视频url: " + state.video_url)
+            log.info("视频需要分割，替换对象,开始编辑视频,视频url: " + state.video_input)
             task_list = [
-                asyncio.create_task(gen4aleph.ainvoke([state.image_url], video_url[1]))
-                for video_url in state.video_time_slice
+                asyncio.create_task(gen4aleph.ainvoke([state.image_input], video_input[1]))
+                for video_input in state.video_time_slice
             ]
             edited_videos = await asyncio.gather(*task_list)
             for edited_video, total_list in zip(edited_videos, state.video_time_slice):
@@ -114,7 +114,7 @@ class VideoFlowWorkflow:
                 await write_file(edited_name, content)
                 total_list.append(edited_name)
             new_video = await video_processor.concatenate_video(
-                state.video_time_slice, state.video_url
+                state.video_time_slice, state.video_input
             )
             state.result = new_video
         state.complete = True
@@ -122,20 +122,20 @@ class VideoFlowWorkflow:
 
     async def download_image(self, state: VideoEditState) -> VideoEditState:
         """下载用户上传的图片，支持 HTTP URL 或本地文件"""
-        if state.image_url.startswith(("http://", "https://")):
+        if state.image_input.startswith(("http://", "https://")):
             async with httpx.AsyncClient() as client:
-                response = await client.get(state.image_url, timeout=300)
+                response = await client.get(state.image_input, timeout=300)
                 response.raise_for_status()
             # 从 URL 提取文件名
-            url_path = state.image_url.split("?")[0].split("/")[-1]
+            url_path = state.image_input.split("?")[0].split("/")[-1]
             file_name = url_path if "." in url_path else url_path + ".webp"
             success = await write_file(file_name, response.content)
             if not success:
                 raise Exception(f"写入图片到本地失败: {file_name}")
             log.info(f"下载图片成功: {file_name}")
-            state.image_url = file_name
+            state.image_input = file_name
         else:
-            log.info(f"使用本地图片: {state.image_url}")
+            log.info(f"使用本地图片: {state.image_input}")
         return state
 
     async def search_video(self, state: VideoEditState) -> VideoEditState:
@@ -145,33 +145,33 @@ class VideoFlowWorkflow:
             log.error(f"从抖音上爬取视频失败, 视频关键词: {state.video_keyword}")
             raise Exception(f"从抖音上爬取视频失败, 视频关键词: {state.video_keyword}")
         else:
-            state.provide_video_url = res
+            state.provide_video_input = res
         return state
 
     async def select_video(self, state: VideoEditState) -> VideoEditState:
         """根据用户输入的视频关键词, 从视频库中选择视频"""
-        url = interrupt({"provide_video_url": state.provide_video_url})
-        state.video_url = url
+        url = interrupt({"provide_video_input": state.provide_video_input})
+        state.video_input = url
         return state
 
     async def split_video(self, state: VideoEditState) -> VideoEditState:
         """根据用户输入的时间范围, 分割视频"""
-        if state.video_url is None:
+        if state.video_input is None:
             raise ValueError("视频url不能为空")
-        if isinstance(state.video_url, list):
+        if isinstance(state.video_input, list):
             raise ValueError("一次只能处理一个视频")
-        sec = await video_processor.detect_video_len(state.video_url)
+        sec = await video_processor.detect_video_len(state.video_input)
         if sec <= 5:
-            log.info(f"视频时长小于5秒，无需分割，视频url: {state.video_url}")
+            log.info(f"视频时长小于5秒，无需分割，视频url: {state.video_input}")
         else:
-            log.info(f"视频时长大于5秒，需要分割，视频url: {state.video_url}")
+            log.info(f"视频时长大于5秒，需要分割，视频url: {state.video_input}")
             chain = qwen3vl_dashchat | self.parser
             duration_seconds_json = await chain.ainvoke(
-                {"video": state.video_url, "object": state.video_keyword}  # type: ignore
+                {"video": state.video_input, "object": state.video_keyword}  # type: ignore
             )
             duration_seconds = json.loads(duration_seconds_json)
             log.info(
-                f"视频时长为{sec}秒，需要分割为{duration_seconds}秒,视频url: {state.video_url}"
+                f"视频时长为{sec}秒，需要分割为{duration_seconds}秒,视频url: {state.video_input}"
             )
             state.video_time_slice = duration_seconds
             temp_list = []
@@ -179,7 +179,7 @@ class VideoFlowWorkflow:
                 start = item[0]
                 end = item[1]
                 new_video = await video_processor.split_video(
-                    state.video_url, start=start, end=end
+                    state.video_input, start=start, end=end
                 )
                 temp_list.append([item, new_video])
             state.video_time_slice = temp_list
@@ -207,21 +207,21 @@ class VideoFlowWorkflow:
         chunk = await process(state_out)
         if "__interrupt__" in chunk:
             interrupt_info = chunk["__interrupt__"][0].value
-            if "provide_video_url" in interrupt_info:
+            if "provide_video_input" in interrupt_info:
                 return {
                     "status": "pending_selection",
                     "session_id": session_id,
-                    "candidates": interrupt_info["provide_video_url"],
+                    "candidates": interrupt_info["provide_video_input"],
                     "complete": None,
                 }
         return chunk
 
-    async def resume(self, session_id: str, selected_video_file: str) -> Dict[str, Any]:
+    async def resume(self, session_id: str, video_input: str) -> Dict[str, Any]:
         """
-        恢复中断的工作流，传入用户选择的视频文件名。
+        恢复中断的工作流，传入用户选择的视频来源（可以是 HTTP URL 或本地文件名）。
         """
         config = {"configurable": {"thread_id": session_id}}
-        state_out = Command(resume=selected_video_file)
+        state_out = Command(resume=video_input)
         chunk = await self.workflow.ainvoke(state_out, config)  # type: ignore
         return chunk
 
