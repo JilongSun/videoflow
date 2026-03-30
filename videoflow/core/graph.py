@@ -23,7 +23,6 @@ class VideoEditState(BaseModel):
     用户在启动工作流时，必须要提供抖音搜索关键词，以及用来替换的图片
     """
 
-    messages: Annotated[list[AnyMessage], add_messages]
     image_url: str = Field(
         ...,
         description="用户上传的图片url（HTTP）或本地图片文件名",

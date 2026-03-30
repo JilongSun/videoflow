@@ -15,6 +15,30 @@ VideoFlow 是一个 AI 驱动的视频自动化工作流系统，以 **MCP Serve
 Demo (飞书+FastAPI) ──→ MCP Client ──→ MCP Server
 ```
 
+### 运行流程说明
+
+VideoFlow 仅作为 MCP 服务端，**不直接与用户交互**，所有人机交互均由外部 Agent 实现。推荐的标准流程如下：
+
+1. **参数收集**  
+      用户向 Agent 发起视频编辑请求。Agent 检查所需参数（如图片、关键词等），如有缺失，主动向用户提问，直到参数齐全。
+
+2. **启动工作流**  
+      Agent 调用 MCP 的 `tool_run_video_workflow`，传入全部参数，启动完整视频编辑流程。
+
+3. **中断与人工干预**  
+      工作流遇到需要用户决策的节点（如视频候选选择）时，MCP 返回 `{"status": "pending_selection", "candidates": [...], "session_id": ...}`，**不做任何通知**。
+
+4. **Agent 通知用户**  
+      Agent 收到中断结果后，负责将候选项展示给用户，并收集用户选择。
+
+5. **恢复工作流**  
+      Agent 调用 MCP 的 `tool_resume_video_workflow`，传入 `session_id` 和用户选择，工作流继续执行，直至完成。
+
+6. **thread_id/session_id 管理**  
+      每次启动新任务时，MCP 返回唯一 session_id，Agent 必须在当前会话的短期记忆/上下文中保存 session_id，resume/status 查询等接口都要自动携带。任务完成后清除。不同任务/会话的 session_id 必须隔离，不能混用。
+
+> MCP 只负责业务流程和中断点的状态管理，所有用户交互、参数补全、决策均由 Agent 层实现。
+
 ### 核心模块
 
 | 模块 | 职责 |

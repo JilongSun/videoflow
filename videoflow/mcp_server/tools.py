@@ -1,13 +1,4 @@
 from mcp.server.fastmcp import FastMCP
-from videoflow.core.tools import (
-    search_video,
-    download_video,
-    download_image,
-    analyze_video,
-    edit_video,
-    split_video,
-    concatenate_video,
-)
 from videoflow.core.graph import video_flow_workflow
 from videoflow.utils import log
 from typing import Optional, Union, List
@@ -20,86 +11,6 @@ mcp = FastMCP(
     "可以单独调用各个工具，也可以通过 run_video_workflow 执行完整工作流。",
     port=18070,
 )
-
-
-@mcp.tool()
-async def tool_search_video(keyword: str, publish_time: str = "1") -> list:
-    """搜索抖音视频，返回候选视频分享链接列表
-
-    Args:
-        keyword: 视频搜索关键词
-        publish_time: 发布时间筛选，"1"=最近1天，"7"=最近7天
-    """
-    return await search_video(keyword, publish_time)
-
-
-@mcp.tool()
-async def tool_download_video(video_url: str, file_name: Optional[str] = None) -> dict:
-    """下载抖音视频到本地
-
-    Args:
-        video_url: 视频分享链接
-        file_name: 保存的文件名（可选，不提供则自动生成）
-    """
-    return await download_video(video_url, file_name)
-
-
-@mcp.tool()
-async def tool_download_image(image_url: str, file_name: Optional[str] = None) -> dict:
-    """下载图片到本地，支持 HTTP URL
-
-    Args:
-        image_url: 图片的 HTTP URL
-        file_name: 保存的文件名（可选）
-    """
-    return await download_image(image_url, file_name)
-
-
-@mcp.tool()
-async def tool_analyze_video(video_path: str, object_keyword: str) -> dict:
-    """使用 AI（Qwen3-VL）分析视频中目标物体出现的时间段
-
-    Args:
-        video_path: 视频文件名（位于 outputs/videos/ 下）
-        object_keyword: 要检测的目标物体关键词（如"猫"、"狗"）
-    """
-    return await analyze_video(video_path, object_keyword)
-
-
-@mcp.tool()
-async def tool_split_video(video_path: str, time_slices: list) -> dict:
-    """按时间段分割视频
-
-    Args:
-        video_path: 视频文件名
-        time_slices: 时间段列表，格式 [[start_sec, end_sec], ...]
-    """
-    return await split_video(video_path, time_slices)
-
-
-@mcp.tool()
-async def tool_edit_video(
-    video_path: str, image_path: str, prompt: Optional[str] = None
-) -> dict:
-    """使用 Runway Gen4Aleph AI 编辑视频（替换视频中的物体），单片段≤5秒
-
-    Args:
-        video_path: 视频文件名
-        image_path: 参考图片文件名（用于替换的目标图片）
-        prompt: 编辑提示词（可选）
-    """
-    return await edit_video(video_path, image_path, prompt)
-
-
-@mcp.tool()
-async def tool_concatenate_video(video_list: list, original_video: str) -> dict:
-    """拼接多段编辑后的视频
-
-    Args:
-        video_list: 视频片段信息列表，格式 [{"start": int, "end": int, "sliced_file": str, "edited_file": str}, ...]
-        original_video: 原始视频文件名
-    """
-    return await concatenate_video(video_list, original_video)
 
 
 @mcp.tool()
@@ -125,7 +36,6 @@ async def tool_run_video_workflow(
     from videoflow.core.graph import VideoEditState
 
     state = VideoEditState(
-        messages=[],
         image_url=image_url,
         video_keyword=video_keyword,
         session_id=session_id or "",
