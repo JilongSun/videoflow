@@ -1,13 +1,16 @@
 ---
 name: videoflow-mcp
-description: 使用 VideoFlow MCP 执行完整视频编辑工作流，包含参数补全、HITL 中断处理、thread_id 会话管理与恢复执行规范。
+description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作流，并在流程中断时进行恢复；当用户提到抖音搜索视频、MCP 名称 videoflow/VideoFlow、视频编辑或产品替换时触发。
 ---
 
 # VideoFlow Agent-MCP 协作技能
 
-## 适用场景
-- 需要通过 MCP 调用 VideoFlow 完成视频编辑工作流
-- 需要处理工作流中断（Human-in-the-Loop）并恢复执行
+## 触发条件
+仅当用户请求命中以下任一条件时，才触发本技能：
+- 提到从抖音搜索、抓取、爬取相关视频（如“从抖音找素材”“抖音搜视频”）
+- 提到 MCP 名称 `videoflow` 或 `VideoFlow`
+- 明确要使用 MCP 的视频编辑能力（如“视频编辑”“替换视频内容”）
+- 提到产品替换相关诉求（如“产品替换”“商品替换”“把视频里的物体换掉”）
 
 ## 执行原则
 - 只把 VideoFlow 当作 MCP 能力提供方，不让 MCP 直接与用户交互
