@@ -20,22 +20,19 @@ Demo (飞书+FastAPI) ──→ MCP Client ──→ MCP Server
 VideoFlow 仅作为 MCP 服务端，**不直接与用户交互**，所有人机交互均由外部 Agent 实现。推荐的标准流程如下：
 
 1. **参数收集**  
-      用户向 Agent 发起视频编辑请求。Agent 检查所需参数（如图片、关键词等），如有缺失，主动向用户提问，直到参数齐全。
+      用户向 Agent 发起视频编辑请求。Agent 检查所需参数（如图片、关键词、本地视频等），如有缺失，主动向用户提问，直到参数齐全。
 
-2. **启动工作流**  
-      Agent 调用 MCP 的 `tool_run_video_workflow`，传入全部参数，启动完整视频编辑流程。
+2. **准备本地视频素材**  
+      如果用户需要从抖音找素材，Agent 先调用 `tool_search_video` 搜索候选，再由用户确认后调用 `tool_download_video` 下载到本地；如果用户已提供本地视频，则跳过此步骤。
 
-3. **中断与人工干预**  
-      工作流遇到需要用户决策的节点（如视频候选选择）时，MCP 返回 `{"status": "pending_selection", "candidates": [...], "session_id": ...}`，**不做任何通知**。
+3. **启动工作流**  
+      Agent 调用 MCP 的 `tool_run_video_workflow`，传入图片、关键词和本地视频路径，启动完整视频编辑流程。
 
-4. **Agent 通知用户**  
-      Agent 收到中断结果后，负责将候选项展示给用户，并收集用户选择。
+4. **返回结果**  
+      MCP 返回最终结果给 Agent，由 Agent 再反馈给用户。
 
-5. **恢复工作流**  
-      Agent 调用 MCP 的 `tool_resume_video_workflow`，传入 `session_id` 和用户选择，工作流继续执行，直至完成。
-
-6. **thread_id/session_id 管理**  
-      每次启动新任务时，MCP 返回唯一 session_id，Agent 必须在当前会话的短期记忆/上下文中保存 session_id，resume/status 查询等接口都要自动携带。任务完成后清除。不同任务/会话的 session_id 必须隔离，不能混用。
+5. **thread_id/session_id 管理**  
+      `session_id` 仅用于标识一次工作流执行。若 Agent 需要链路追踪，可自行传入；否则 MCP 会自动生成。当前工作流无中断恢复步骤，不需要再调用 resume 接口。
 
 > MCP 只负责业务流程和中断点的状态管理，所有用户交互、参数补全、决策均由 Agent 层实现。
 
@@ -95,7 +92,7 @@ python test.py
 
 - Runway Gen4Aleph 限制视频 ≤5 秒，较长视频会自动分片处理后拼接
 - LangGraph 使用 `MemorySaver`（内存检查点），重启后状态丢失
-- 工作流 `select_video` 中断时返回候选列表给调用方，通过 `resume()` 恢复
+- 视频编辑工作流只接受本地视频输入；抖音搜索与下载需先通过独立 MCP tools 完成
 - MCP Server 端口 18070，Demo FastAPI 端口 8000
 - Demo 模块的飞书轮询回复间隔 10 秒，无退避策略
 - 小红书发布功能已剥离，作为独立 MCP 服务（端口 18060）供 Agent 直接调用

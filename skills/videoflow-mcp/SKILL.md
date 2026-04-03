@@ -1,6 +1,6 @@
 ---
 name: videoflow-mcp
-description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作流，并在流程中断时进行恢复；当用户提到抖音搜索视频、MCP 名称 videoflow/VideoFlow、视频编辑或产品替换时触发。
+description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作流；支持先搜索并下载抖音视频，再基于本地视频启动工作流；当用户提到抖音搜索视频、MCP 名称 videoflow/VideoFlow、视频编辑或产品替换时触发。
 ---
 
 # VideoFlow Agent-MCP 协作技能
@@ -15,43 +15,76 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 ## 执行原则
 - 只把 VideoFlow 当作 MCP 能力提供方，不让 MCP 直接与用户交互
 - 所有用户沟通、参数补全、选择确认都由我负责
-- 所有中断、异常、完成结果都按结构化返回处理
+- 视频编辑工作流只接受本地视频文件，不接受在线链接
+- 搜索、选择、下载素材与最终启动工作流是两段式协作
+- 所有异常、完成结果都按结构化返回处理
 
 ## 标准执行流程
 1. **参数检查与补全**
-   先检查请求参数是否完整（至少包含图片输入、视频关键词等）。参数缺失时，主动向用户追问，直到参数齐全。
-2. **启动工作流**
-   参数齐全后调用 `tool_run_video_workflow`。
-3. **处理中断**
-   如果返回 `status = pending_selection`，说明流程需要人工决策。将 `candidates` 呈现给用户并收集选择。
-4. **恢复工作流**
-   收到用户选择后，调用 `tool_resume_video_workflow` 继续执行。
-5. **返回结果**
+   先检查请求参数是否完整（至少包含图片输入、视频关键词，以及可用的本地视频输入方案）。参数缺失时，主动向用户追问，直到参数齐全。
+2. **判断视频来源路径**
+   如果用户要从抖音找素材，先走“搜索/选择/下载”路径；如果用户已经提供本地视频，直接走“启动工作流”路径。
+3. **路径 A：搜索并下载抖音视频**
+   先调用 `tool_search_video` 获取候选列表，展示给用户选择；用户确认后，再调用 `tool_download_video` 把选中的分享链接下载到本地。
+4. **路径 B：直接使用本地视频**
+   如果用户已经提供本地视频文件名或本地路径，跳过搜索和下载。
+5. **启动视频编辑工作流**
+   拿到本地 `video_input` 后，调用 `tool_run_video_workflow`。
+6. **返回结果**
    收到完成结果后，向用户反馈最终产物或错误信息。
 
-## thread_id / session_id 管理
-- 将 thread_id（即 session_id）视为核心参数。
-- 启动新任务后，立即在当前会话的短期记忆中保存 thread_id。
-- 后续 resume、状态查询等调用自动携带同一个 thread_id。
-- 不同任务之间必须隔离 thread_id，禁止复用或串用。
-- 任务完成或会话关闭后，及时清理该 thread_id。
+## session_id 管理
+- `session_id` 为可选参数，用于标识一次工作流执行。
+- 如果调用方需要链路追踪，可在启动工作流时显式传入 `session_id`。
+- 如果不传，MCP 会自动生成一个 `session_id`。
 
-## 处理中断与状态查询
-- `pending_selection` 只代表流程暂停，不代表失败。
-- 只要 thread_id 未失效，就可以基于该 thread_id 继续 resume 或查询状态。
-- 如果出现 thread_id 不存在或已过期，提示用户重新发起任务。
+## 工作流边界
+- `tool_run_video_workflow` 不负责抖音搜索、候选选择或视频下载。
+- 抖音素材获取必须先通过 `tool_search_video` 和 `tool_download_video` 完成。
+- 传给工作流的 `video_input` 必须是本地视频文件名或本地路径。
+- 如果拿到的是 HTTP 视频链接，先下载，再启动工作流。
 
 ## 参数最小清单（启动前）
 - `image_input`：用户提供的图片输入（HTTP URL 或已存在文件名）
-- `video_keyword`：视频检索关键词
-- `video_input`：可选；如果提供则可跳过候选选择环节
+- `video_keyword`：视频关键词，用于抖音检索或视频分析
+- `video_input`：本地视频文件名或本地路径
 
 启动前检查规则：
 - 缺 `image_input`：先向用户追问图片输入
 - 缺 `video_keyword`：先向用户追问关键词
-- 两者齐全后才允许调用 `tool_run_video_workflow`
+- 缺本地 `video_input` 且用户要搜索素材：先调用搜索与下载工具补齐本地视频
+- 三者齐全后才允许调用 `tool_run_video_workflow`
 
 ## MCP 调用模板
+
+### 独立搜索调用
+```json
+{
+   "tool": "tool_search_video",
+   "args": {
+      "keyword": "<video_keyword>",
+      "publish_time": 7
+   }
+}
+```
+
+返回值：视频候选链接列表（最多 10 条），供用户选择后再下载到本地。
+
+### 独立下载调用
+```json
+{
+   "tool": "tool_download_video",
+   "args": {
+      "video_url": "<selected_video_url>",
+      "file_name": "<optional_local_filename>",
+      "download_path": "<optional_local_directory>"
+   }
+}
+```
+
+返回值：
+- `success`：是否下载成功
+- `video_id`：下载后生成的本地视频标识
 
 ### 启动调用
 ```json
@@ -60,34 +93,29 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
    "args": {
       "image_input": "<image_input>",
       "video_keyword": "<video_keyword>",
-      "video_input": "<optional_video_input_or_file>",
+      "video_input": "<local_video_file>",
       "session_id": "<optional_session_id>"
    }
 }
 ```
 
 ### 启动返回处理
-- 若 `status = pending_selection`：
-   - 保存 `session_id`
-   - 将 `candidates` 展示给用户
-   - 等待用户选择后进入 resume
-- 若 `status = completed`：
-   - 直接返回结果并结束会话
-- 若 `status = error`：
-   - 返回错误信息并按重试策略处理
+- 返回工作流执行结果；若成功，结果中会包含编辑后的输出信息。
+- 不再存在 `pending_selection` 中断，也不需要 `tool_resume_video_workflow`。
 
-### 恢复调用
-```json
-{
-   "tool": "tool_resume_video_workflow",
-   "args": {
-      "session_id": "<saved_session_id>",
-      "video_input": "<http_url_or_local_filename>"
-   }
-}
-```
+## 两种启动方式示例
 
-> `video_input` 可以是候选列表中的 HTTP URL，也可以是已下载到本地的文件名，两者均可接受。
+### 方式 1：先搜索抖音视频，再启动工作流
+1. 调用 `tool_search_video`
+2. 将候选列表展示给用户
+3. 用户选定候选后，调用 `tool_download_video`
+4. 下载成功后，拿到本地 `video_input`
+5. 调用 `tool_run_video_workflow`
+
+### 方式 2：用户直接提供本地视频，再启动工作流
+1. 确认用户提供的是本地视频文件名或本地路径
+2. 收集 `image_input` 和 `video_keyword`
+3. 直接调用 `tool_run_video_workflow`
 
 ## 用户沟通模板（建议）
 
@@ -96,8 +124,10 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
    - 请提供用于替换的视频目标图片（URL 或文件）。
 - 缺关键词时：
    - 请提供要搜索的视频关键词。
+- 缺本地视频且用户需要搜索素材时：
+   - 请提供要搜索的视频关键词，我会先帮你找候选视频，确认后再下载到本地。
 
-### 中断提示模板
+### 候选选择模板
 - 已找到多个候选视频，请从以下候选中选择一个继续处理：
    - 候选 1: ...
    - 候选 2: ...
@@ -110,9 +140,8 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 - `status = error` 且可重试错误（网络抖动、下载失败等）：
    - 最多重试 2 次
    - 每次重试前给出简短提示
-- `session_id` 不存在或已过期：
-   - 不做 resume 重试
-   - 直接提示用户重新发起新任务
+- 搜索结果为空或下载失败：
+   - 先提示用户更换关键词，或重新选择候选后重试
 - 参数缺失或格式错误：
    - 不调用 MCP
    - 先在对话层补齐参数

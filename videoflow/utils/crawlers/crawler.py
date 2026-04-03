@@ -29,7 +29,7 @@ class Crawler:
         self.tikhub_client = tikhub_sdk_v2.ApiClient
 
     async def search_video(
-        self, target: str, publish_time: Optional[Union[int, str]] = "1"
+        self, target: str, publish_time: Optional[Union[int, str]] = "7"
     ) -> Annotated[List, "爬取到的视频链接列表，爬取失败返回空列表"]:
         if isinstance(publish_time, int):
             publish_time = str(publish_time)
@@ -55,10 +55,10 @@ class Crawler:
             response = await client.post(
                 url, json=payload, headers=headers, timeout=9999
             )
-        name = uuid.uuid4().hex[:4]
-        log.info(f"搜索视频 {target} 完成，状态码: {response.status_code}")
+        name = uuid.uuid4().hex[:4]    
         await asyncio.sleep(1)
         if response.status_code == 200:
+            log.info(f"搜索视频 {target} 完成，状态码: {response.status_code}")
             temp = response.json()
             tkhun_info = TkhubInfo(**temp)
             await write_file(f"{target}_{name}.json", tkhun_info.model_dump_json())

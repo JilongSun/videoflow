@@ -19,7 +19,6 @@ class file_processor(ABC):
         pp = os.getenv("N8N_BINARY_PATH", None)
         if not pp:
             log.error("N8N_BINARY_PATH 环境变量未配置")
-            raise ValueError("N8N_BINARY_PATH 环境变量未配置")
         else:
             self.n8n_binary_path = Path(pp)
             log.info(f"n8n二进制文件存储地址: {self.n8n_binary_path}")
