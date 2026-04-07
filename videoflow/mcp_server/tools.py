@@ -59,12 +59,18 @@ async def tool_run_video_workflow(
     video_input: str,
     session_id: Optional[str] = None,
 ) -> dict:
-    """完整流程见名叫videoflow-mcp的SKILL.md文档。
+    """启动视频编辑工作流（第一阶段）。
+
+    对于 > 5 秒的视频，工作流会先处理首个分片并返回预览结果，
+    此时返回值中包含 `__interrupt__` 字段，Agent 需调用
+    `tool_resume_video_workflow` 确认后继续。
+
+    对于 ≤ 5 秒的视频，工作流一次性完成。
 
     Args:
         image_input: 图片来源，可以是 HTTP URL 或本地图片文件名
         video_keyword: 视频关键词，用于素材检索或视频分析
-        video_input: 本地视频文件名或本地视频路径
+        video_input: 本地视频路径
         session_id: 会话 ID（可选，不提供则自动生成）
     """
     from videoflow.core.graph import VideoEditState
@@ -76,3 +82,20 @@ async def tool_run_video_workflow(
         video_input=video_input,
     )
     return await video_flow_workflow.ainvoke(state)
+
+
+@mcp.tool()
+async def tool_resume_video_workflow(
+    session_id: str,
+    approved: bool,
+) -> dict:
+    """恢复被暂停的视频编辑工作流（第二阶段）。
+
+    当 `tool_run_video_workflow` 返回 `__interrupt__` 时，
+    Agent 应展示预览给用户确认，然后调用此工具恢复工作流。
+
+    Args:
+        session_id: 第一阶段返回的会话 ID
+        approved: 用户是否确认首片预览效果满意
+    """
+    return await video_flow_workflow.resume(session_id, {"approved": approved})

@@ -30,7 +30,10 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
    如果用户已经提供本地视频文件名或本地路径，跳过搜索和下载。
 5. **启动视频编辑工作流**
    拿到本地 `video_input` 后，调用 `tool_run_video_workflow`。
-6. **返回结果**
+6. **首片预览确认（视频 > 5 秒时）**
+   当视频超过 5 秒时，工作流会先处理第一个分片并返回 `__interrupt__`，其中包含预览视频文件名。
+   Agent 应将预览结果展示给用户，用户确认满意后调用 `tool_resume_video_workflow` 继续处理剩余分片。
+7. **返回结果**
    收到完成结果后，向用户反馈最终产物或错误信息。
 
 ## session_id 管理
@@ -100,8 +103,22 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 ```
 
 ### 启动返回处理
-- 返回工作流执行结果；若成功，结果中会包含编辑后的输出信息。
-- 不再存在 `pending_selection` 中断，也不需要 `tool_resume_video_workflow`。
+- 视频 ≤ 5 秒：直接返回完成结果，无需额外操作。
+- 视频 > 5 秒：返回值中包含 `__interrupt__` 字段，其中有首片预览视频文件名和剩余分片数。
+  Agent 应展示预览给用户确认，然后调用 `tool_resume_video_workflow`。
+
+### 恢复调用（视频 > 5 秒时必须）
+```json
+{
+   "tool": "tool_resume_video_workflow",
+   "args": {
+      "session_id": "<第一阶段返回的session_id>",
+      "approved": true
+   }
+}
+```
+- `approved: true`：继续处理剩余分片并拼接
+- `approved: false`：中止工作流
 
 ## 两种启动方式示例
 
@@ -111,11 +128,15 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 3. 用户选定候选后，调用 `tool_download_video`
 4. 下载成功后，拿到本地 `video_input`
 5. 调用 `tool_run_video_workflow`
+6. 如果返回 `__interrupt__`，展示首片预览给用户
+7. 用户确认后调用 `tool_resume_video_workflow`
 
 ### 方式 2：用户直接提供本地视频，再启动工作流
 1. 确认用户提供的是本地视频文件名或本地路径
 2. 收集 `image_input` 和 `video_keyword`
 3. 直接调用 `tool_run_video_workflow`
+4. 如果返回 `__interrupt__`，展示首片预览给用户
+5. 用户确认后调用 `tool_resume_video_workflow`
 
 ## 用户沟通模板（建议）
 

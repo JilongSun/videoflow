@@ -28,11 +28,14 @@ VideoFlow 仅作为 MCP 服务端，**不直接与用户交互**，所有人机�
 3. **启动工作流**  
       Agent 调用 MCP 的 `tool_run_video_workflow`，传入图片、关键词和本地视频路径，启动完整视频编辑流程。
 
-4. **返回结果**  
+4. **首片预览确认（视频 > 5 秒时）**  
+      工作流会先处理第一个 5 秒分片并通过 `interrupt()` 暂停，返回包含 `__interrupt__` 的结果。Agent 需将预览展示给用户确认，然后调用 `tool_resume_video_workflow` 继续或中止。
+
+5. **返回结果**  
       MCP 返回最终结果给 Agent，由 Agent 再反馈给用户。
 
-5. **thread_id/session_id 管理**  
-      `session_id` 仅用于标识一次工作流执行。若 Agent 需要链路追踪，可自行传入；否则 MCP 会自动生成。当前工作流无中断恢复步骤，不需要再调用 resume 接口。
+6. **thread_id/session_id 管理**  
+      `session_id` 用于标识一次工作流执行，也用于 `interrupt/resume` 的状态关联。若 Agent 需要链路追踪，可自行传入；否则 MCP 会自动生成。
 
 > MCP 只负责业务流程和中断点的状态管理，所有用户交互、参数补全、决策均由 Agent 层实现。
 
@@ -45,7 +48,7 @@ VideoFlow 仅作为 MCP 服务端，**不直接与用户交互**，所有人机�
 | `videoflow/core/tools/` | 全部业务逻辑：search、download、analyze、edit |
 | `videoflow/core/settings.py` | 配置管理，`MySettings` → `PlatformConfig` → `ModelSettings` 层级 |
 | `videoflow/core/chatmodel.py` | 自定义 LangChain `BaseChatModel` 实现，封装 Runway、DashScope 等 AI 模型 |
-| `videoflow/core/graph.py` | LangGraph 5 节点状态机：download_image → search_video → select_video → split_video → object_replace |
+| `videoflow/core/graph.py` | LangGraph 4 节点状态机：download_image → split_video → preview_first_slice（interrupt）→ object_replace |
 | `videoflow/mcps/client.py` | MCP 客户端基类（供 demo 或其他模块使用） |
 | `videoflow/utils/file_processor/` | Provider 模式的文件处理器（图片/视频/文档），输出到 `outputs/` |
 | `videoflow/utils/crawlers/` | TikHub API 封装，抖音视频搜索与下载 |
