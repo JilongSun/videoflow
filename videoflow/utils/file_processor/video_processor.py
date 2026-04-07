@@ -91,27 +91,27 @@ class VideoProcessor(file_processor):
 
     async def read_file(self, filename: str, path: Optional[str] = None):
         log.info(
-            f"读图片接受参数: 文件名：{filename}, 路径: {path or self.file_reader_folder}"
+            f"读视频接受参数: 文件名：{filename}, 路径: {path or self.file_reader_folder}"
         )
         async with aiofiles.open(
             os.path.join(path or self.file_reader_folder, filename), "rb"
         ) as f:
             res = await f.read()
-        log.info(f"读图片成功: 文件名：{filename}")
+        log.info(f"读视频成功: 文件名：{filename}")
         return res
 
     async def write_file(
         self, filename: str, content: file_content, path: Optional[str] = None
     ) -> bool:
         log.info(
-            f"写图片接受参数: 文件名：{filename}, 内容：{content if len(content) < 10 else content[:10]}, 类型: {type(content)}"
+            f"写视频接受参数: 文件名：{filename}, 内容：{content if len(content) < 10 else content[:10]}, 类型: {type(content)}"
         )
         bin_content = await self._get_bin(content)
         async with aiofiles.open(
             os.path.join(path or self.file_writer_folder, filename), "wb"
         ) as f:
             await f.write(bin_content)
-        log.info(f"写图片成功: 文件名：{filename}")
+        log.info(f"写视频成功: 文件名：{filename}")
         return True
 
     async def get_file_path(self, filename: str, path: Optional[str] = None) -> str:

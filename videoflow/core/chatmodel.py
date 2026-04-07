@@ -45,7 +45,7 @@ from videoflow.utils import log
 from dashscope import MultiModalConversation, AioMultiModalConversation
 import dashscope
 from abc import ABC, abstractmethod
-from runwayml import RunwayML
+from runwayml import RunwayML, AsyncRunwayML
 from pathlib import Path
 import httpx, os, aiofiles, json, asyncio
 
@@ -273,7 +273,7 @@ class Gen4AlephRunway(VideoEditBase):
     """
 
     def model_post_init(self, __context: Any) -> None:
-        self.client = RunwayML(api_key=self.api_key)
+        self.client = AsyncRunwayML(api_key=self.api_key)
 
     async def ainvoke(  # type: ignore
         self,
@@ -316,14 +316,12 @@ class Gen4AlephRunway(VideoEditBase):
             ],
             "extra_headers": {"Content-Type": "application/json"},
         }
-        self.client: RunwayML
+        self.client: AsyncRunwayML
 
-        def gen():
-            log.info(f"input: {input},开始调用genaleph模型")
-            res = self.client.video_to_video.create(**input).wait_for_task_output()
-            return res
+        log.info(f"input: {input},开始调用genaleph模型")
+        tt = await self.client.video_to_video.create(**input)
+        task = await tt.wait_for_task_output()
 
-        task = await asyncio.to_thread(gen)
         if task is None:
             raise ValueError("task is None")
         elif task.status == "SUCCEEDED":
@@ -348,7 +346,7 @@ class Gen4AlephRunway(VideoEditBase):
         elif file_name.startswith(("http", "https")):
             raise ValueError("runway模型只支持runway://开头的uri")
         file = await get_file_path(file_name)
-        response = self.client.uploads.create_ephemeral(
+        response = await self.client.uploads.create_ephemeral(
             file=Path(file), timeout=self.timeout
         )
         return response.uri

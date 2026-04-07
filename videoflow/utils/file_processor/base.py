@@ -16,6 +16,8 @@ root_path = current_path.parent.parent.parent.parent
 
 
 class file_processor(ABC):
+    file_writer_folder: str  # 由子类在 __init__ 中赋值
+
     def __init__(self) -> None:
         pp = os.getenv("N8N_BINARY_PATH", None)
         if not pp:
@@ -200,7 +202,7 @@ class file_processor(ABC):
         base64_string = base64_encoded.decode("utf-8")
 
         return base64_string
-    
+
     async def get_url(self, file_name: str):
         """
         使用ait8的oss储存获得url
@@ -213,18 +215,18 @@ class file_processor(ABC):
             log.error("AIT8_API_KEY 环境变量未配置")
             raise ValueError("AIT8_API_KEY 环境变量未配置")
         path = await self.get_file_path(file_name)
-        
+
         # 使用异步文件操作
         async with aiofiles.open(path, "rb") as f:
             file_content = await f.read()
-        
+
         # 构建异步上传的文件数据
         files = {"file": (file_name, file_content, "application/octet-stream")}
-        
+
         headers = {
             "Authorization": f"Bearer {api_key}",
         }
-        
+
         # 使用异步HTTP客户端
         async with httpx.AsyncClient() as client:
             res = await client.post(
@@ -234,7 +236,7 @@ class file_processor(ABC):
                 files=files,
                 timeout=3000,
             )
-        
+
         if res.status_code == 200:
             return res.json()["url"]
         else:
