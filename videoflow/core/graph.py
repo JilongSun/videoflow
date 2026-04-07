@@ -10,7 +10,7 @@ from videoflow.utils.file_processor import (
     video_processor,
 )
 from .chatmodel import gen4aleph
-import asyncio, uuid, httpx, math, importlib, shutil
+import asyncio, uuid, httpx, math, importlib, shutil, mimetypes
 from urllib.parse import urlparse
 
 
@@ -24,10 +24,14 @@ class VideoEditState(BaseModel):
     第二层（质量控制）：先处理首片 → interrupt 等待人工确认 → 批量处理剩余
     """
 
+    # --- media inputs ---
     image_input: str = Field(
         ...,
         description="用户上传的图片url (HTTP)或本地图片路径",
     )
+    video_input: Annotated[str, "本地视频路径"]
+
+    # --- business parameters ---
     video_keyword: str = Field(
         ...,
         description="用户输入的视频关键词, 用于素材检索或视频分析",
@@ -36,7 +40,6 @@ class VideoEditState(BaseModel):
         default="",
         description="工作流会话ID，用于标识一次执行",
     )
-    video_input: Annotated[str, "本地视频路径"]
     video_time_slice: Annotated[
         Optional[List[List]],
         "[[[start_sec, end_sec], sliced_video, edited_sliced_video]]",
@@ -55,7 +58,7 @@ class VideoEditState(BaseModel):
 class VideoFlowWorkflow:
     """视频处理工作流框架
 
-    流程: download_image → split_video → preview_first_slice → object_replace → END
+    流程: prepare_media_inputs → split_video → preview_first_slice → object_replace → END
                                               ↑
                                         interrupt() 等待人工确认
     """
@@ -84,13 +87,13 @@ class VideoFlowWorkflow:
 
     def _setup_workflow(self):
         """设置工作流节点和边"""
-        self.graph.add_node("download_image", self.download_image)
+        self.graph.add_node("prepare_media_inputs", self.prepare_media_inputs)
         self.graph.add_node("split_video", self.split_video)
         self.graph.add_node("preview_first_slice", self.preview_first_slice)
         self.graph.add_node("object_replace", self.object_replace)
 
-        self.graph.add_edge(START, "download_image")
-        self.graph.add_edge("download_image", "split_video")
+        self.graph.add_edge(START, "prepare_media_inputs")
+        self.graph.add_edge("prepare_media_inputs", "split_video")
         self.graph.add_edge("split_video", "preview_first_slice")
         self.graph.add_edge("preview_first_slice", "object_replace")
         self.graph.add_edge("object_replace", END)
@@ -106,6 +109,16 @@ class VideoFlowWorkflow:
         parsed = urlparse(url)
         base = Path(parsed.path).name
         return base if base else default_name
+
+    @staticmethod
+    def _guess_ext_from_content_type(
+        content_type: Optional[str],
+        default_ext: str,
+    ) -> str:
+        if not content_type:
+            return default_ext
+        guessed_ext = mimetypes.guess_extension(content_type.split(";")[0].strip())
+        return guessed_ext or default_ext
 
     async def _materialize_media(
         self,
@@ -130,11 +143,14 @@ class VideoFlowWorkflow:
         # 1) URL: 直接下载到项目目录
         if self._is_url(resource):
             file_name = self._guess_name_from_url(resource, default_name)
-            if not Path(file_name).suffix:
-                file_name = file_name + default_ext
             async with httpx.AsyncClient() as client:
                 response = await client.get(resource, timeout=600)
                 response.raise_for_status()
+            if not Path(file_name).suffix:
+                file_name = file_name + self._guess_ext_from_content_type(
+                    response.headers.get("content-type"),
+                    default_ext,
+                )
             success = await write_file(file_name, response.content)
             if not success:
                 raise RuntimeError(f"下载并写入失败: {resource} -> {file_name}")
@@ -176,7 +192,7 @@ class VideoFlowWorkflow:
         )
         return target_path.name
 
-    async def download_image(self, state: VideoEditState) -> VideoEditState:
+    async def prepare_media_inputs(self, state: VideoEditState) -> VideoEditState:
         """统一素材落地：将图片和视频都放入项目 outputs 目录。"""
         state.image_input = await self._materialize_media(
             state.image_input,
