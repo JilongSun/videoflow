@@ -1,7 +1,8 @@
-import os, aiofiles, httpx, base64
+import os, aiofiles, httpx, base64, uuid, shutil, mimetypes, asyncio
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import TypeVar, Awaitable, Any, Optional, Annotated, Union
+from urllib.parse import urlparse
 from videoflow.utils import log
 
 # file_content: URL / base64 / filesystem-v2 路径，本质都是 str
@@ -41,6 +42,122 @@ class file_processor(ABC):
     @abstractmethod
     def extensions(self) -> tuple[str, ...]:
         pass
+
+    @property
+    @abstractmethod
+    def default_extension(self) -> str:
+        """默认文件扩展名，如 '.mp4', '.webp', '.json'"""
+        pass
+
+    # ── 文件名 & 路径工具方法 ──────────────────────────
+
+    @staticmethod
+    def _is_url(path: str) -> bool:
+        return path.startswith(("http://", "https://"))
+
+    @staticmethod
+    def _is_bare_filename(resource: str) -> bool:
+        """判断输入是否为纯文件名（不含目录分隔符）。"""
+        return (
+            os.sep not in resource
+            and "/" not in resource
+            and not Path(resource).is_absolute()
+        )
+
+    @staticmethod
+    def _ensure_filename(value: str) -> str:
+        """提取纯文件名，拒绝含目录分隔符或路径穿越的字符串。"""
+        name = Path(value).name
+        if not name or name in (".", ".."):
+            raise ValueError(f"无效的文件名: {value!r}")
+        return name
+
+    @staticmethod
+    def _safe_target_name(writer_dir: Path, desired_name: str) -> str:
+        """若目标目录已存在同名文件，追加短 UUID 避免覆盖。"""
+        target = writer_dir / desired_name
+        if not target.exists():
+            return desired_name
+        stem = Path(desired_name).stem
+        ext = Path(desired_name).suffix
+        safe_name = f"{stem}_{uuid.uuid4().hex[:6]}{ext}"
+        log.debug(f"文件名冲突，重命名: {desired_name} -> {safe_name}")
+        return safe_name
+
+    @staticmethod
+    def _guess_name_from_url(url: str, default_name: str) -> str:
+        parsed = urlparse(url)
+        base = Path(parsed.path).name
+        return base if base else default_name
+
+    @staticmethod
+    def _guess_ext_from_content_type(
+        content_type: Optional[str],
+        default_ext: str,
+    ) -> str:
+        if not content_type:
+            return default_ext
+        guessed = mimetypes.guess_extension(content_type.split(";")[0].strip())
+        return guessed or default_ext
+
+    # ── 资源落地（核心方法） ──────────────────────────
+
+    async def materialize(self, resource: str) -> str:
+        """将任意来源（URL / 文件名 / 本地路径）落地到本处理器的 outputs 目录。
+
+        Returns:
+            纯文件名（不含目录），文件保证存在于 self.file_writer_folder 中。
+        """
+        writer_dir = Path(self.file_writer_folder)
+        default_ext = self.default_extension
+        default_name = f"file_{uuid.uuid4().hex[:8]}{default_ext}"
+        writer_dir.mkdir(parents=True, exist_ok=True)
+
+        # ── 1) URL: 下载到 outputs 目录 ──
+        if self._is_url(resource):
+            file_name = self._guess_name_from_url(resource, default_name)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(resource, timeout=600)
+                response.raise_for_status()
+            if not Path(file_name).suffix:
+                file_name += self._guess_ext_from_content_type(
+                    response.headers.get("content-type"),
+                    default_ext,
+                )
+            file_name = self._ensure_filename(file_name)
+            file_name = self._safe_target_name(writer_dir, file_name)
+            success = await self.write_file(file_name, response.content)
+            if not success:
+                raise RuntimeError(f"下载并写入失败: {resource} -> {file_name}")
+            log.info(f"URL 下载成功: {resource} -> {file_name}")
+            return file_name
+
+        # ── 2) 纯文件名: 检查是否已在 outputs 目录中 ──
+        if self._is_bare_filename(resource):
+            if (writer_dir / resource).is_file():
+                log.info(f"已在项目目录中: {writer_dir / resource}")
+                return resource
+
+        # ── 3) 本地路径（绝对或相对）: 解析并复制到 outputs ──
+        source_path = Path(resource).resolve()
+
+        if not source_path.is_file():
+            raise FileNotFoundError(f"输入不存在: {resource}")
+
+        # 已在目标 outputs 目录中，直接返回纯文件名
+        if source_path.parent.resolve() == writer_dir.resolve():
+            log.info(f"已在目标目录中: {source_path}")
+            return source_path.name
+
+        # 复制到 outputs 目录，带冲突保护
+        desired_name = source_path.name
+        if not Path(desired_name).suffix:
+            desired_name += default_ext
+        safe_name = self._safe_target_name(writer_dir, desired_name)
+        target_path = writer_dir / safe_name
+        await asyncio.to_thread(shutil.copy2, str(source_path), str(target_path))
+        log.info(f"已落地到项目目录: {source_path} -> {target_path}")
+        return safe_name
 
     async def _get_bin(self, content: file_content | bytes) -> bytes:
         """

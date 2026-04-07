@@ -3,8 +3,9 @@ from .doc_processor import doc_processor
 from .video_processor import video_processor
 from .base import file_processor, FP
 from typing import TypeVar, Awaitable, Any, Optional, Generic, cast
+import os
 
-__all__ = ["file_processor_provider", "read_file", "write_file", "get_file_path"]
+__all__ = ["file_processor_provider", "read_file", "write_file", "get_file_path", "materialize_file"]
 
 
 class FileProcessorProvider(Generic[FP]):
@@ -31,6 +32,41 @@ file_processor_provider.register(doc_processor)
 file_processor_provider.register(video_processor)
 
 
+# ── 按类型快速查找处理器 ──
+_TYPE_TO_PROCESSOR = {
+    "image": image_processor,
+    "video": video_processor,
+    "doc": doc_processor,
+}
+
+
+async def materialize_file(resource: str, media_type: str) -> str:
+    """将任意来源的文件落地到项目 outputs 对应目录，返回纯文件名。
+
+    Args:
+        resource: URL / 本地路径 / 纯文件名
+        media_type: 处理器类型，如 "image", "video", "doc"
+    """
+    processor = _TYPE_TO_PROCESSOR.get(media_type)
+    if processor is None:
+        raise ValueError(f"不支持的 media_type: {media_type!r}，可选: {list(_TYPE_TO_PROCESSOR)}")
+    return await processor.materialize(resource)
+
+
+def _validate_filename(filename: str) -> str:
+    """确保 filename 是纯文件名，拒绝含路径分隔符或穿越字符的输入。
+
+    这是文件 I/O 的最后一道防线，防止外部传入的路径绕过
+    outputs 目录约束，导致路径穿越或读写任意位置。
+    """
+    basename = os.path.basename(filename)
+    if basename != filename or not basename or basename in (".", ".."):
+        raise ValueError(
+            f"filename 必须是纯文件名（不含目录路径），收到: {filename!r}"
+        )
+    return basename
+
+
 async def read_file(filename: str, path: Optional[str] = None) -> bytes:
     """
     读取文件
@@ -40,6 +76,7 @@ async def read_file(filename: str, path: Optional[str] = None) -> bytes:
     Returns:
         any: 文件内容
     """
+    filename = _validate_filename(filename)
     global file_processor_provider
     if file_processor_provider is None:
         file_processor_provider = FileProcessorProvider()
@@ -57,6 +94,7 @@ async def write_file(filename: str, content: Any, path: Optional[str] = None) ->
     Returns:
         bool: 是否写入成功
     """
+    filename = _validate_filename(filename)
     global file_processor_provider
     if file_processor_provider is None:
         file_processor_provider = FileProcessorProvider()
@@ -73,6 +111,7 @@ async def get_file_path(filename: str, path: Optional[str] = None) -> str:
     Returns:
         str: 文件路径
     """
+    filename = _validate_filename(filename)
     global file_processor_provider
     if file_processor_provider is None:
         file_processor_provider = FileProcessorProvider()

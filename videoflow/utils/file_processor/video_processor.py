@@ -121,6 +121,10 @@ class VideoProcessor(file_processor):
     def extensions(self) -> tuple[str, ...]:
         return self._extensions
 
+    @property
+    def default_extension(self) -> str:
+        return ".mp4"
+
     async def video_download_fromweb(
         self,
         url: str,

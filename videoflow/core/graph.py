@@ -6,12 +6,11 @@ from videoflow.utils import log
 from pydantic import BaseModel, Field
 from videoflow.utils.file_processor import (
     write_file,
-    image_processor,
     video_processor,
+    materialize_file,
 )
 from .chatmodel import gen4aleph
-import asyncio, uuid, httpx, math, importlib, shutil, mimetypes
-from urllib.parse import urlparse
+import asyncio, uuid, math
 
 
 MAX_SLICE_SEC = 5  # Runway Gen4Aleph 单次处理上限
@@ -66,13 +65,15 @@ class VideoFlowWorkflow:
     def __init__(self):
         self.graph = StateGraph(VideoEditState)
         self._setup_workflow()
-        self.workflow = self.compile()
+        self.workflow: Optional[Any] = None
+        self._checkpointer_cm: Optional[Any] = None
+        self._checkpointer: Optional[Any] = None
+        self._workflow_lock = asyncio.Lock()
 
     def _get_sqlite_checkpointer(self) -> Any:
         # 持久化到项目根目录下的 .langgraph/checkpoints.db
         try:
-            sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite")
-            SqliteSaver = getattr(sqlite_module, "SqliteSaver")
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
         except ImportError as e:
             raise ImportError(
                 "缺少依赖 langgraph-checkpoint-sqlite，请先执行 `uv sync` 或安装该包"
@@ -83,7 +84,22 @@ class VideoFlowWorkflow:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_db = checkpoint_dir / "checkpoints.db"
         log.info(f"使用 SQLite 持久化检查点: {checkpoint_db}")
-        return SqliteSaver.from_conn_string(str(checkpoint_db))
+        # from_conn_string 返回 async context manager
+        return AsyncSqliteSaver.from_conn_string(str(checkpoint_db))
+
+    async def _ensure_workflow(self) -> None:
+        if self.workflow is not None:
+            return
+
+        async with self._workflow_lock:
+            if self.workflow is not None:
+                return
+
+            checkpointer_cm = self._get_sqlite_checkpointer()
+            checkpointer = await checkpointer_cm.__aenter__()
+            self._checkpointer_cm = checkpointer_cm
+            self._checkpointer = checkpointer
+            self.workflow = self.compile(checkpointer=checkpointer)
 
     def _setup_workflow(self):
         """设置工作流节点和边"""
@@ -100,118 +116,15 @@ class VideoFlowWorkflow:
 
     # ── 节点实现 ──────────────────────────────────────
 
-    @staticmethod
-    def _is_url(path: str) -> bool:
-        return path.startswith(("http://", "https://"))
-
-    @staticmethod
-    def _guess_name_from_url(url: str, default_name: str) -> str:
-        parsed = urlparse(url)
-        base = Path(parsed.path).name
-        return base if base else default_name
-
-    @staticmethod
-    def _guess_ext_from_content_type(
-        content_type: Optional[str],
-        default_ext: str,
-    ) -> str:
-        if not content_type:
-            return default_ext
-        guessed_ext = mimetypes.guess_extension(content_type.split(";")[0].strip())
-        return guessed_ext or default_ext
-
-    async def _materialize_media(
-        self,
-        resource: str,
-        media_type: str,
-    ) -> str:
-        """将输入素材统一落地到项目 outputs 目录，并返回本地文件名。"""
-        if media_type not in {"image", "video"}:
-            raise ValueError(f"不支持的 media_type: {media_type}")
-
-        if media_type == "image":
-            writer_dir = Path(image_processor.file_writer_folder)
-            default_name = f"image_{uuid.uuid4().hex[:8]}.webp"
-            default_ext = ".webp"
-        else:
-            writer_dir = Path(video_processor.file_writer_folder)
-            default_name = f"video_{uuid.uuid4().hex[:8]}.mp4"
-            default_ext = ".mp4"
-
-        writer_dir.mkdir(parents=True, exist_ok=True)
-
-        # 1) URL: 直接下载到项目目录
-        if self._is_url(resource):
-            file_name = self._guess_name_from_url(resource, default_name)
-            async with httpx.AsyncClient() as client:
-                response = await client.get(resource, timeout=600)
-                response.raise_for_status()
-            if not Path(file_name).suffix:
-                file_name = file_name + self._guess_ext_from_content_type(
-                    response.headers.get("content-type"),
-                    default_ext,
-                )
-            success = await write_file(file_name, response.content)
-            if not success:
-                raise RuntimeError(f"下载并写入失败: {resource} -> {file_name}")
-            log.info(f"{media_type} URL 下载成功: {resource} -> {file_name}")
-            return file_name
-
-        # 2) 先尝试直接当作已在项目 outputs 中的文件名
-        existing_in_output = writer_dir / resource
-        if existing_in_output.is_file():
-            log.info(f"{media_type} 已在项目目录中: {existing_in_output}")
-            return resource
-
-        # 3) 本地路径: 若在项目内，尽量转成文件名；否则复制到项目目录
-        source_path = Path(resource)
-        if not source_path.is_absolute():
-            source_path = source_path.resolve()
-
-        if not source_path.is_file():
-            raise FileNotFoundError(f"{media_type} 输入不存在: {resource}")
-
-        source_name = source_path.name
-        if not Path(source_name).suffix:
-            source_name = source_name + default_ext
-        target_path = writer_dir / source_name
-
-        project_root = Path(__file__).resolve().parents[2]
-        is_inside_project = project_root in source_path.parents
-
-        # 若已在对应 outputs 目录，直接复用
-        if source_path.parent == writer_dir:
-            log.info(f"{media_type} 已在目标目录中: {source_path}")
-            return source_path.name
-
-        # 不在项目根目录或在项目内但不在 outputs，都复制到标准目录，保证后续路径一致
-        await asyncio.to_thread(shutil.copy2, str(source_path), str(target_path))
-        log.info(
-            f"{media_type} 已落地到项目目录: {source_path} -> {target_path}, "
-            f"inside_project={is_inside_project}"
-        )
-        return target_path.name
-
     async def prepare_media_inputs(self, state: VideoEditState) -> VideoEditState:
         """统一素材落地：将图片和视频都放入项目 outputs 目录。"""
-        state.image_input = await self._materialize_media(
-            state.image_input,
-            media_type="image",
-        )
-        state.video_input = await self._materialize_media(
-            state.video_input,
-            media_type="video",
-        )
+        state.image_input = await materialize_file(state.image_input, "image")
+        state.video_input = await materialize_file(state.video_input, "video")
         log.info(f"素材落地完成: image={state.image_input}, video={state.video_input}")
         return state
 
     async def split_video(self, state: VideoEditState) -> VideoEditState:
         """固定 5 秒等分切割视频"""
-        if state.video_input.startswith(("http://", "https://")):
-            raise ValueError(
-                "video_input 必须是本地视频文件，请先下载到本地后再启动工作流"
-            )
-
         total_sec = await video_processor.detect_video_len(state.video_input)
 
         if total_sec <= MAX_SLICE_SEC:
@@ -345,14 +258,17 @@ class VideoFlowWorkflow:
 
     def compile(self, checkpointer: Optional[Any] = None):
         if checkpointer is None:
-            checkpointer = self._get_sqlite_checkpointer()
+            raise ValueError("compile 需要已初始化的 checkpointer")
         return self.graph.compile(checkpointer=checkpointer)
 
     async def ainvoke(self, state: VideoEditState) -> Dict[str, Any]:
         """启动视频编辑工作流（第一阶段调用）"""
+        await self._ensure_workflow()
         session_id = state.session_id or str(uuid.uuid4())
         state.session_id = session_id
         config = {"configurable": {"thread_id": session_id}}
+        if self.workflow is None:
+            raise RuntimeError("workflow 初始化失败")
         return await self.workflow.ainvoke(state, config)  # type: ignore
 
     async def resume(self, session_id: str, decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -362,7 +278,10 @@ class VideoFlowWorkflow:
             session_id: 工作流会话ID（与第一阶段相同）
             decision: 人工确认结果，如 {"approved": True}
         """
+        await self._ensure_workflow()
         config = {"configurable": {"thread_id": session_id}}
+        if self.workflow is None:
+            raise RuntimeError("workflow 初始化失败")
         return await self.workflow.ainvoke(Command(resume=decision), config)  # type: ignore
 
 

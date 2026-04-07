@@ -66,5 +66,9 @@ class DocProcessor(file_processor):
     def extensions(self) -> tuple[str, ...]:
         return self._extensions
 
+    @property
+    def default_extension(self) -> str:
+        return ".json"
+
 
 doc_processor = DocProcessor()
