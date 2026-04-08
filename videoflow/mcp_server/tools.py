@@ -54,6 +54,7 @@ async def tool_download_video(
 
 @mcp.tool()
 async def tool_run_video_workflow(
+    prompt: str,
     image_input: str,
     video_keyword: str,
     video_input: str,
@@ -68,7 +69,13 @@ async def tool_run_video_workflow(
     对于 ≤ 5 秒的视频，工作流一次性完成。
 
     Args:
-        image_input: 图片来源，可以是 HTTP URL 或本地图片文件名
+        prompt: 视频编辑提示词，描述对视频的修改意图。分两种模式：
+            - 不使用参考图片（直接描述替换效果）：
+              例："Turn the wheels of the taxi to blocks of ice. Keep everything else the same."
+            - 使用参考图片（将 image_input 中的物体替换到视频中）：
+              例："Replace the cat in the video with the cat in the picture"
+        image_input: 参考图片来源，可以是 HTTP URL 或本地图片文件名；
+            若提示词不涉及参考图片，可传空字符串
         video_keyword: 视频关键词，用于素材检索或视频分析
         video_input: 本地视频路径
         session_id: 会话 ID（可选，不提供则自动生成）
@@ -76,6 +83,7 @@ async def tool_run_video_workflow(
     from videoflow.core.graph import VideoEditState
 
     state = VideoEditState(
+        prompt=prompt,
         image_input=image_input,
         video_keyword=video_keyword,
         session_id=session_id or "",

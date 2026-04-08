@@ -48,15 +48,33 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 - 如果拿到的是 HTTP 视频链接，先下载，再启动工作流。
 
 ## 参数最小清单（启动前）
-- `image_input`：用户提供的图片输入（HTTP URL 或已存在文件名）
+- `prompt`：视频编辑提示词，描述对视频的修改意图（见下方提示词构造规则）
+- `image_input`：参考图片输入（HTTP URL 或已存在文件名）；不使用参考图片时传空字符串
 - `video_keyword`：视频关键词，用于抖音检索或视频分析
 - `video_input`：本地视频文件名或本地路径
 
 启动前检查规则：
-- 缺 `image_input`：先向用户追问图片输入
+- 缺 `prompt`：根据用户意图按照下方规则推导，无法推导时追问
+- 缺 `image_input` 且用户意图涉及参考图片替换：先向用户追问图片输入
 - 缺 `video_keyword`：先向用户追问关键词
 - 缺本地 `video_input` 且用户要搜索素材：先调用搜索与下载工具补齐本地视频
-- 三者齐全后才允许调用 `tool_run_video_workflow`
+- 四者满足条件后才允许调用 `tool_run_video_workflow`
+
+## 提示词（prompt）构造规则
+提示词分两种模式，Agent 应根据用户是否提供参考图片来选择：
+
+### 模式一：不使用参考图片（直接描述替换效果）
+由 Agent 根据用户描述的修改意图，用英文自然语言描述对视频的改动，其余保持不变。
+
+示例：
+> "Turn the wheels of the taxi to blocks of ice. Keep everything else the same."
+
+### 模式二：使用参考图片（将图片中的物体替换到视频中）
+当用户提供了参考图片时，提示词固定为以下结构：
+> "Replace the `<视频中的目标物体>` in the video with the `<图片中的物体>` in the picture"
+
+示例：
+> "Replace the cat in the video with the cat in the picture"
 
 ## MCP 调用模板
 
@@ -94,7 +112,8 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 {
    "tool": "tool_run_video_workflow",
    "args": {
-      "image_input": "<image_input>",
+      "prompt": "<编辑提示词（见提示词构造规则）>",
+      "image_input": "<参考图片URL或文件名，不使用参考图片时传空字符串>",
       "video_keyword": "<video_keyword>",
       "video_input": "<local_video_file>",
       "session_id": "<optional_session_id>"

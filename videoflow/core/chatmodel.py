@@ -277,6 +277,7 @@ class Gen4AlephRunway(VideoEditBase):
 
     async def ainvoke(  # type: ignore
         self,
+        prompt: str,
         image: List[str],
         video: str,
         mask_image: Optional[str] = None,
@@ -286,6 +287,7 @@ class Gen4AlephRunway(VideoEditBase):
         **kwargs: Any,
     ):
         temp_dic = {
+            "prompt": prompt,
             "image": image,
             "video": video,
             "mask_image": mask_image,
@@ -302,12 +304,13 @@ class Gen4AlephRunway(VideoEditBase):
         temp = json.loads(cast(str, messages[-1].content))
         image: List[str] = temp["image"]
         video: str = temp["video"]
+        prompt = temp["prompt"]
         image_url = await self._get_urls(image)
         video_url = await self._get_urls(video)
         input = {
             "model": self.model_name,
             "video_uri": video_url,
-            "prompt_text": "Replace the cat in the video with the cat in the picture",
+            "prompt_text": prompt,
             "references": [
                 {
                     "type": "image",

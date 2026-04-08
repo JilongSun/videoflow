@@ -23,12 +23,16 @@ class VideoEditState(BaseModel):
     第二层（质量控制）：先处理首片 → interrupt 等待人工确认 → 批量处理剩余
     """
 
-    # --- media inputs ---
+    # --- runway inputs ---
     image_input: str = Field(
         ...,
         description="用户上传的图片url (HTTP)或本地图片路径",
     )
     video_input: Annotated[str, "本地视频路径"]
+    prompt: str = Field(
+        ...,
+        description="用户输入的编辑提示，用于指导视频编辑模型",
+    )
 
     # --- business parameters ---
     video_keyword: str = Field(
@@ -161,7 +165,7 @@ class VideoFlowWorkflow:
         first_slice = state.video_time_slice[0]
         log.info(f"处理首片预览: {first_slice[1]} ({first_slice[0]})")
 
-        res = await gen4aleph.ainvoke([state.image_input], first_slice[1])
+        res = await gen4aleph.ainvoke(state.prompt, [state.image_input], first_slice[1])
         if res.content is None:
             raise ValueError(f"首片编辑失败: {first_slice[1]}")
 
@@ -209,6 +213,7 @@ class VideoFlowWorkflow:
             # 视频 ≤ 5s，直接处理
             log.info(f"视频无需分割，直接编辑: {state.video_input}")
             res = await gen4aleph.ainvoke(
+                state.prompt,
                 [state.image_input],
                 state.video_input,
             )
@@ -223,7 +228,9 @@ class VideoFlowWorkflow:
             if remaining:
                 log.info(f"开始并行处理剩余 {len(remaining)} 个分片")
                 tasks = [
-                    asyncio.create_task(gen4aleph.ainvoke([state.image_input], s[1]))
+                    asyncio.create_task(
+                        gen4aleph.ainvoke(state.prompt, [state.image_input], s[1])
+                    )
                     for s in remaining
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
