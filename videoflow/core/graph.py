@@ -72,8 +72,21 @@ class VideoFlowWorkflow:
         self._setup_workflow()
         self.workflow: Optional[Any] = None
         self._checkpointer_cm: Optional[Any] = None
-        self._checkpointer: Optional[Any] = None
-        self._workflow_lock = asyncio.Lock()
+
+    async def __aenter__(self):
+        self._checkpointer_cm = self._get_sqlite_checkpointer()
+        if self._checkpointer_cm is None:
+            raise RuntimeError("无法获取 checkpointer，无法进入工作流上下文")
+        checkpointer = await self._checkpointer_cm.__aenter__()
+        self.workflow = self.compile(checkpointer=checkpointer)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._checkpointer_cm:
+            await self._checkpointer_cm.__aexit__(exc_type, exc_val, exc_tb)
+            self._checkpointer_cm = None
+        self.workflow = None
+        return False
 
     def _get_sqlite_checkpointer(self) -> Any:
         # 持久化到项目根目录下的 .langgraph/checkpoints.db
@@ -91,20 +104,6 @@ class VideoFlowWorkflow:
         log.info(f"使用 SQLite 持久化检查点: {checkpoint_db}")
         # from_conn_string 返回 async context manager
         return AsyncSqliteSaver.from_conn_string(str(checkpoint_db))
-
-    async def _ensure_workflow(self) -> None:
-        if self.workflow is not None:
-            return
-
-        async with self._workflow_lock:
-            if self.workflow is not None:
-                return
-
-            checkpointer_cm = self._get_sqlite_checkpointer()
-            checkpointer = await checkpointer_cm.__aenter__()
-            self._checkpointer_cm = checkpointer_cm
-            self._checkpointer = checkpointer
-            self.workflow = self.compile(checkpointer=checkpointer)
 
     def _setup_workflow(self):
         """设置工作流节点和边"""
@@ -176,11 +175,15 @@ class VideoFlowWorkflow:
 
         progress_store.update_slice(state.session_id, 0, SliceStatus.PROCESSING)
         try:
-            res = await gen4aleph.ainvoke(state.prompt, [state.image_input], first_slice[1])
+            res = await gen4aleph.ainvoke(
+                state.prompt, [state.image_input], first_slice[1]
+            )
             if res.content is None:
                 raise ValueError(f"首片编辑失败: {first_slice[1]}")
         except Exception as e:
-            progress_store.update_slice(state.session_id, 0, SliceStatus.FAILED, error=str(e))
+            progress_store.update_slice(
+                state.session_id, 0, SliceStatus.FAILED, error=str(e)
+            )
             progress_store.set_phase(state.session_id, WorkflowPhase.FAILED)
             raise
 
@@ -240,7 +243,9 @@ class VideoFlowWorkflow:
                 if res.content is None:
                     raise ValueError("视频编辑失败")
             except Exception as e:
-                progress_store.update_slice(state.session_id, 0, SliceStatus.FAILED, error=str(e))
+                progress_store.update_slice(
+                    state.session_id, 0, SliceStatus.FAILED, error=str(e)
+                )
                 progress_store.set_phase(state.session_id, WorkflowPhase.FAILED)
                 raise
             state.result = cast(str, res.content)
@@ -251,18 +256,24 @@ class VideoFlowWorkflow:
             # 首片已在 preview_first_slice 中完成，处理剩余分片
             remaining = state.video_time_slice[1:]
             if remaining:
-                progress_store.set_phase(state.session_id, WorkflowPhase.BATCH_PROCESSING)
+                progress_store.set_phase(
+                    state.session_id, WorkflowPhase.BATCH_PROCESSING
+                )
                 log.info(f"开始并行处理剩余 {len(remaining)} 个分片")
 
                 async def _process_slice(idx: int, slice_video: str):
-                    progress_store.update_slice(state.session_id, idx, SliceStatus.PROCESSING)
+                    progress_store.update_slice(
+                        state.session_id, idx, SliceStatus.PROCESSING
+                    )
                     try:
                         r = await gen4aleph.ainvoke(
                             state.prompt, [state.image_input], slice_video
                         )
                         if r.content is None:
                             raise ValueError(f"分片编辑返回空结果: {slice_video}")
-                        progress_store.update_slice(state.session_id, idx, SliceStatus.COMPLETED)
+                        progress_store.update_slice(
+                            state.session_id, idx, SliceStatus.COMPLETED
+                        )
                         return r
                     except Exception as e:
                         progress_store.update_slice(
@@ -312,13 +323,12 @@ class VideoFlowWorkflow:
 
     async def ainvoke(self, state: VideoEditState) -> Dict[str, Any]:
         """启动视频编辑工作流（第一阶段调用）"""
-        await self._ensure_workflow()
+        if self.workflow is None:
+            raise RuntimeError("请通过 async with VideoFlowWorkflow() 使用")
         session_id = state.session_id or str(uuid.uuid4())
         state.session_id = session_id
         progress_store.create(session_id)
         config = {"configurable": {"thread_id": session_id}}
-        if self.workflow is None:
-            raise RuntimeError("workflow 初始化失败")
         return await self.workflow.ainvoke(state, config)  # type: ignore
 
     async def resume(self, session_id: str, decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -328,11 +338,7 @@ class VideoFlowWorkflow:
             session_id: 工作流会话ID（与第一阶段相同）
             decision: 人工确认结果，如 {"approved": True}
         """
-        await self._ensure_workflow()
-        config = {"configurable": {"thread_id": session_id}}
         if self.workflow is None:
-            raise RuntimeError("workflow 初始化失败")
+            raise RuntimeError("请通过 async with VideoFlowWorkflow() 使用")
+        config = {"configurable": {"thread_id": session_id}}
         return await self.workflow.ainvoke(Command(resume=decision), config)  # type: ignore
-
-
-video_flow_workflow = VideoFlowWorkflow()

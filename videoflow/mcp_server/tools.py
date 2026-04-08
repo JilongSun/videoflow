@@ -1,5 +1,5 @@
 from mcp.server.fastmcp import FastMCP
-from videoflow.core.graph import video_flow_workflow
+from videoflow.core.graph import VideoFlowWorkflow
 from videoflow.core.progress import progress_store
 from videoflow.utils.crawlers.crawler import crawler
 from videoflow.utils import log
@@ -95,7 +95,8 @@ async def tool_run_video_workflow(
         session_id=session_id or "",
         video_input=video_input,
     )
-    return await video_flow_workflow.ainvoke(state)
+    async with VideoFlowWorkflow() as wf:
+        return await wf.ainvoke(state)
 
 
 @mcp.tool()
@@ -112,7 +113,8 @@ async def tool_resume_video_workflow(
         session_id: 第一阶段返回的会话 ID
         approved: 用户是否确认首片预览效果满意
     """
-    return await video_flow_workflow.resume(session_id, {"approved": approved})
+    async with VideoFlowWorkflow() as wf:
+        return await wf.resume(session_id, {"approved": approved})
 
 
 @mcp.tool()
@@ -145,7 +147,9 @@ async def tool_get_workflow_progress(
         包含 phase、percent、slices 等进度信息的字典；
         若 session_id 不存在则返回错误提示
     """
+    log.info(f"查询工作流进度: {session_id}")
     summary = progress_store.get_summary(session_id)
     if summary is None:
+        log.warning(f"未找到会话: {session_id}")
         return {"error": f"未找到会话: {session_id}", "session_id": session_id}
     return summary
