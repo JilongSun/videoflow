@@ -1,7 +1,10 @@
 from mcp.server.fastmcp import FastMCP
 from videoflow.core.graph import video_flow_workflow
+from videoflow.core.progress import progress_store
 from videoflow.utils.crawlers.crawler import crawler
+from videoflow.utils import log
 from typing import Optional, Union
+import uuid
 
 
 mcp = FastMCP(
@@ -82,6 +85,9 @@ async def tool_run_video_workflow(
     """
     from videoflow.core.graph import VideoEditState
 
+    log.info(
+        f"启动视频编辑工作流，视频输入: {video_input}, 提示词: {prompt}, 参考图片: {image_input}, 视频关键词: {video_keyword}, 会话ID: {session_id or ''}"
+    )
     state = VideoEditState(
         prompt=prompt,
         image_input=image_input,
@@ -107,3 +113,39 @@ async def tool_resume_video_workflow(
         approved: 用户是否确认首片预览效果满意
     """
     return await video_flow_workflow.resume(session_id, {"approved": approved})
+
+
+@mcp.tool()
+async def tool_create_session() -> dict:
+    """创建一个新的工作流会话 ID。
+
+    Agent 必须在调用 `tool_run_video_workflow` 之前先调用此工具获取 session_id，
+    并将 session_id 告知用户，方便用户后续查询进度。
+
+    Returns:
+        包含 session_id 的字典
+    """
+    session_id = str(uuid.uuid4())[0:6]  # 生成一个简短的随机 session_id
+    log.info(f"创建新会话: {session_id}")
+    return {"session_id": session_id}
+
+
+@mcp.tool()
+async def tool_get_workflow_progress(
+    session_id: str,
+) -> dict:
+    """查询视频编辑工作流的执行进度。
+
+    返回当前阶段（phase）、各分片完成状态和总体完成百分比。
+
+    Args:
+        session_id: 工作流会话 ID
+
+    Returns:
+        包含 phase、percent、slices 等进度信息的字典；
+        若 session_id 不存在则返回错误提示
+    """
+    summary = progress_store.get_summary(session_id)
+    if summary is None:
+        return {"error": f"未找到会话: {session_id}", "session_id": session_id}
+    return summary

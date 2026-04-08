@@ -22,24 +22,30 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 ## 标准执行流程
 1. **参数检查与补全**
    先检查请求参数是否完整（至少包含图片输入、视频关键词，以及可用的本地视频输入方案）。参数缺失时，主动向用户追问，直到参数齐全。
-2. **判断视频来源路径**
-   如果用户要从抖音找素材，先走“搜索/选择/下载”路径；如果用户已经提供本地视频，直接走“启动工作流”路径。
-3. **路径 A：搜索并下载抖音视频**
+2. **创建会话 ID**
+   **必须**在启动工作流之前调用 `tool_create_session` 获取 `session_id`，
+   并**立即告知用户** session_id，方便用户后续查询进度。
+3. **判断视频来源路径**
+   如果用户要从抖音找素材，先走"搜索/选择/下载"路径；如果用户已经提供本地视频，直接走"启动工作流"路径。
+4. **路径 A：搜索并下载抖音视频**
    先调用 `tool_search_video` 获取候选列表，展示给用户选择；用户确认后，再调用 `tool_download_video` 把选中的分享链接下载到本地。
-4. **路径 B：直接使用本地视频**
+5. **路径 B：直接使用本地视频**
    如果用户已经提供本地视频文件名或本地路径，跳过搜索和下载。
-5. **启动视频编辑工作流**
-   拿到本地 `video_input` 后，调用 `tool_run_video_workflow`。
-6. **首片预览确认（视频 > 5 秒时）**
+6. **启动视频编辑工作流**
+   拿到本地 `video_input` 后，调用 `tool_run_video_workflow`，**必须传入步骤 2 获取的 session_id**。
+7. **首片预览确认（视频 > 5 秒时）**
    当视频超过 5 秒时，工作流会先处理第一个分片并返回 `__interrupt__`，其中包含预览视频文件名。
    Agent 应将预览结果展示给用户，用户确认满意后调用 `tool_resume_video_workflow` 继续处理剩余分片。
-7. **返回结果**
+8. **返回结果**
    收到完成结果后，向用户反馈最终产物或错误信息。
+9. **用户查询进度**
+   当用户通过 session_id 询问进度时，调用 `tool_get_workflow_progress` 返回当前阶段和完成百分比。
 
 ## session_id 管理
-- `session_id` 为可选参数，用于标识一次工作流执行。
-- 如果调用方需要链路追踪，可在启动工作流时显式传入 `session_id`。
-- 如果不传，MCP 会自动生成一个 `session_id`。
+- Agent **必须**在启动工作流之前调用 `tool_create_session` 获取 `session_id`。
+- 获取后**必须立即告知用户** session_id，方便用户后续询问进度。
+- 将获取的 `session_id` 传入 `tool_run_video_workflow` 的 `session_id` 参数。
+- 用户随时可以通过 session_id 询问进度，Agent 调用 `tool_get_workflow_progress` 查询。
 
 ## 工作流边界
 - `tool_run_video_workflow` 不负责抖音搜索、候选选择或视频下载。
@@ -77,6 +83,33 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 > "Replace the cat in the video with the cat in the picture"
 
 ## MCP 调用模板
+
+### 创建会话（启动工作流前必须调用）
+```json
+{
+   "tool": "tool_create_session",
+   "args": {}
+}
+```
+返回值：`{"session_id": "<uuid>"}`。Agent 必须将 session_id 告知用户。
+
+### 查询进度
+```json
+{
+   "tool": "tool_get_workflow_progress",
+   "args": {
+      "session_id": "<session_id>"
+   }
+}
+```
+返回值：
+- `phase`：当前阶段（preparing/splitting/preview/waiting_approval/batch_processing/concatenating/completed/failed/cancelled）
+- `percent`：总体完成百分比（0-100）
+- `total_slices`：总分片数
+- `completed`：已完成分片数
+- `processing`：正在处理的分片数
+- `failed`：失败的分片数
+- `slices`：每个分片的详细状态
 
 ### 独立搜索调用
 ```json
@@ -142,20 +175,24 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 ## 两种启动方式示例
 
 ### 方式 1：先搜索抖音视频，再启动工作流
-1. 调用 `tool_search_video`
-2. 将候选列表展示给用户
-3. 用户选定候选后，调用 `tool_download_video`
-4. 下载成功后，拿到本地 `video_input`
-5. 调用 `tool_run_video_workflow`
-6. 如果返回 `__interrupt__`，展示首片预览给用户
-7. 用户确认后调用 `tool_resume_video_workflow`
+1. 调用 `tool_create_session`，获取 session_id 并告知用户
+2. 调用 `tool_search_video`
+3. 将候选列表展示给用户
+4. 用户选定候选后，调用 `tool_download_video`
+5. 下载成功后，拿到本地 `video_input`
+6. 调用 `tool_run_video_workflow`（传入 session_id）
+7. 如果返回 `__interrupt__`，展示首片预览给用户
+8. 用户确认后调用 `tool_resume_video_workflow`
+9. 用户随时可查询进度：调用 `tool_get_workflow_progress`
 
 ### 方式 2：用户直接提供本地视频，再启动工作流
-1. 确认用户提供的是本地视频文件名或本地路径
-2. 收集 `image_input` 和 `video_keyword`
-3. 直接调用 `tool_run_video_workflow`
-4. 如果返回 `__interrupt__`，展示首片预览给用户
-5. 用户确认后调用 `tool_resume_video_workflow`
+1. 调用 `tool_create_session`，获取 session_id 并告知用户
+2. 确认用户提供的是本地视频文件名或本地路径
+3. 收集 `image_input` 和 `video_keyword`
+4. 调用 `tool_run_video_workflow`（传入 session_id）
+5. 如果返回 `__interrupt__`，展示首片预览给用户
+6. 用户确认后调用 `tool_resume_video_workflow`
+7. 用户随时可查询进度：调用 `tool_get_workflow_progress`
 
 ## 用户沟通模板（建议）
 

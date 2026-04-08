@@ -10,6 +10,7 @@ from videoflow.utils.file_processor import (
     materialize_file,
 )
 from .chatmodel import gen4aleph
+from .progress import progress_store, WorkflowPhase, SliceStatus
 import asyncio, uuid, math
 
 
@@ -122,6 +123,7 @@ class VideoFlowWorkflow:
 
     async def prepare_media_inputs(self, state: VideoEditState) -> VideoEditState:
         """统一素材落地：将图片和视频都放入项目 outputs 目录。"""
+        progress_store.set_phase(state.session_id, WorkflowPhase.PREPARING)
         state.image_input = await materialize_file(state.image_input, "image")
         state.video_input = await materialize_file(state.video_input, "video")
         log.info(f"素材落地完成: image={state.image_input}, video={state.video_input}")
@@ -129,10 +131,13 @@ class VideoFlowWorkflow:
 
     async def split_video(self, state: VideoEditState) -> VideoEditState:
         """固定 5 秒等分切割视频"""
+        progress_store.set_phase(state.session_id, WorkflowPhase.SPLITTING)
         total_sec = await video_processor.detect_video_len(state.video_input)
 
         if total_sec <= MAX_SLICE_SEC:
             log.info(f"视频时长 {total_sec}s ≤ {MAX_SLICE_SEC}s，无需分割")
+            # 无分片，初始化为单片进度
+            progress_store.init_slices(state.session_id, [[0, total_sec]])
             return state
 
         # 按固定 5 秒切分
@@ -140,6 +145,7 @@ class VideoFlowWorkflow:
         log.info(f"视频时长 {total_sec}s，将切为 {num_slices} 个分片")
 
         temp_list = []
+        time_ranges = []
         for i in range(num_slices):
             start = i * MAX_SLICE_SEC
             end = min((i + 1) * MAX_SLICE_SEC, total_sec)
@@ -147,8 +153,10 @@ class VideoFlowWorkflow:
                 state.video_input, start=start, end=end
             )
             temp_list.append([[start, end], new_video])
+            time_ranges.append([start, end])
 
         state.video_time_slice = temp_list
+        progress_store.init_slices(state.session_id, time_ranges)
         return state
 
     async def preview_first_slice(self, state: VideoEditState) -> VideoEditState:
@@ -162,19 +170,28 @@ class VideoFlowWorkflow:
             # 无分片，跳过预览直接走 object_replace
             return state
 
+        progress_store.set_phase(state.session_id, WorkflowPhase.PREVIEW)
         first_slice = state.video_time_slice[0]
         log.info(f"处理首片预览: {first_slice[1]} ({first_slice[0]})")
 
-        res = await gen4aleph.ainvoke(state.prompt, [state.image_input], first_slice[1])
-        if res.content is None:
-            raise ValueError(f"首片编辑失败: {first_slice[1]}")
+        progress_store.update_slice(state.session_id, 0, SliceStatus.PROCESSING)
+        try:
+            res = await gen4aleph.ainvoke(state.prompt, [state.image_input], first_slice[1])
+            if res.content is None:
+                raise ValueError(f"首片编辑失败: {first_slice[1]}")
+        except Exception as e:
+            progress_store.update_slice(state.session_id, 0, SliceStatus.FAILED, error=str(e))
+            progress_store.set_phase(state.session_id, WorkflowPhase.FAILED)
+            raise
 
         edited_name = "edited_" + first_slice[1]
         await write_file(edited_name, cast(str, res.content))
         first_slice.append(edited_name)
         state.preview_slice = edited_name
+        progress_store.update_slice(state.session_id, 0, SliceStatus.COMPLETED)
 
         log.info(f"首片预览已生成: {edited_name}，等待人工确认")
+        progress_store.set_phase(state.session_id, WorkflowPhase.WAITING_APPROVAL)
 
         # interrupt: 暂停工作流，将预览信息返回给 Agent
         decision = interrupt(
@@ -192,7 +209,7 @@ class VideoFlowWorkflow:
             state.complete = False
             state.result = "用户拒绝了首片预览效果，工作流中止"
             log.info("用户拒绝首片预览，工作流中止")
-            # 返回状态，object_replace 会检查 complete 跳过处理
+            progress_store.set_phase(state.session_id, WorkflowPhase.CANCELLED)
             return state
 
         log.info("用户确认首片效果，继续处理剩余分片")
@@ -212,26 +229,50 @@ class VideoFlowWorkflow:
         if not state.video_time_slice:
             # 视频 ≤ 5s，直接处理
             log.info(f"视频无需分割，直接编辑: {state.video_input}")
-            res = await gen4aleph.ainvoke(
-                state.prompt,
-                [state.image_input],
-                state.video_input,
-            )
-            if res.content is None:
-                raise ValueError("视频编辑失败")
+            progress_store.set_phase(state.session_id, WorkflowPhase.BATCH_PROCESSING)
+            progress_store.update_slice(state.session_id, 0, SliceStatus.PROCESSING)
+            try:
+                res = await gen4aleph.ainvoke(
+                    state.prompt,
+                    [state.image_input],
+                    state.video_input,
+                )
+                if res.content is None:
+                    raise ValueError("视频编辑失败")
+            except Exception as e:
+                progress_store.update_slice(state.session_id, 0, SliceStatus.FAILED, error=str(e))
+                progress_store.set_phase(state.session_id, WorkflowPhase.FAILED)
+                raise
             state.result = cast(str, res.content)
             await write_file("edited_" + state.video_input, state.result)
+            progress_store.update_slice(state.session_id, 0, SliceStatus.COMPLETED)
 
         else:
             # 首片已在 preview_first_slice 中完成，处理剩余分片
             remaining = state.video_time_slice[1:]
             if remaining:
+                progress_store.set_phase(state.session_id, WorkflowPhase.BATCH_PROCESSING)
                 log.info(f"开始并行处理剩余 {len(remaining)} 个分片")
+
+                async def _process_slice(idx: int, slice_video: str):
+                    progress_store.update_slice(state.session_id, idx, SliceStatus.PROCESSING)
+                    try:
+                        r = await gen4aleph.ainvoke(
+                            state.prompt, [state.image_input], slice_video
+                        )
+                        if r.content is None:
+                            raise ValueError(f"分片编辑返回空结果: {slice_video}")
+                        progress_store.update_slice(state.session_id, idx, SliceStatus.COMPLETED)
+                        return r
+                    except Exception as e:
+                        progress_store.update_slice(
+                            state.session_id, idx, SliceStatus.FAILED, error=str(e)
+                        )
+                        raise
+
                 tasks = [
-                    asyncio.create_task(
-                        gen4aleph.ainvoke(state.prompt, [state.image_input], s[1])
-                    )
-                    for s in remaining
+                    asyncio.create_task(_process_slice(i + 1, s[1]))
+                    for i, s in enumerate(remaining)
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -241,24 +282,25 @@ class VideoFlowWorkflow:
                             f"分片编辑失败: {slice_info[1]} "
                             f"({slice_info[0]}), 错误: {res}"
                         )
+                        progress_store.set_phase(state.session_id, WorkflowPhase.FAILED)
                         raise ValueError(
                             f"分片编辑失败: {slice_info[1]} ({slice_info[0]}), "
                             f"错误: {res}"
                         )
                     edited_video = res
-                    if edited_video.content is None:
-                        raise ValueError(f"分片编辑返回空结果: {slice_info[1]}")
                     edited_name = "edited_" + slice_info[1]
                     await write_file(edited_name, cast(str, edited_video.content))
                     slice_info.append(edited_name)
 
             # 拼接所有分片（包括已处理的首片）
+            progress_store.set_phase(state.session_id, WorkflowPhase.CONCATENATING)
             new_video = await video_processor.concatenate_video(
                 state.video_time_slice, state.video_input
             )
             state.result = new_video
 
         state.complete = True
+        progress_store.set_phase(state.session_id, WorkflowPhase.COMPLETED)
         return state
 
     # ── 编译与执行 ──────────────────────────────────────
@@ -273,6 +315,7 @@ class VideoFlowWorkflow:
         await self._ensure_workflow()
         session_id = state.session_id or str(uuid.uuid4())
         state.session_id = session_id
+        progress_store.create(session_id)
         config = {"configurable": {"thread_id": session_id}}
         if self.workflow is None:
             raise RuntimeError("workflow 初始化失败")
