@@ -1,10 +1,11 @@
 from mcp.server.fastmcp import FastMCP
 from videoflow.core.graph import VideoFlowWorkflow
 from videoflow.core.progress import progress_store
+from videoflow.core.progress import WorkflowPhase
 from videoflow.utils.crawlers.crawler import crawler
 from videoflow.utils import log
-from typing import Optional, Union
-import uuid
+from typing import Any, Optional, Union
+import uuid, asyncio
 
 
 mcp = FastMCP(
@@ -65,11 +66,12 @@ async def tool_run_video_workflow(
 ) -> dict:
     """启动视频编辑工作流（第一阶段）。
 
-    对于 > 5 秒的视频，工作流会先处理首个分片并返回预览结果，
-    此时返回值中包含 `__interrupt__` 字段，Agent 需调用
-    `tool_resume_video_workflow` 确认后继续。
+    工具会立即返回 started 状态与 session_id，实际处理在后台执行。
+    Agent 应在收到返回后立刻把 session_id 告知用户，方便后续查询进度。
 
-    对于 ≤ 5 秒的视频，工作流一次性完成。
+    对于 > 5 秒的视频，后台工作流会先处理首个分片并进入 waiting_approval；
+    Agent 通过 `tool_get_workflow_progress` 获取 interrupt_payload 进行用户确认，
+    再调用 `tool_resume_video_workflow` 继续。
 
     Args:
         prompt: 视频编辑提示词，描述对视频的修改意图。分两种模式：
@@ -85,18 +87,50 @@ async def tool_run_video_workflow(
     """
     from videoflow.core.graph import VideoEditState
 
-    log.info(
-        f"启动视频编辑工作流，视频输入: {video_input}, 提示词: {prompt}, 参考图片: {image_input}, 视频关键词: {video_keyword}, 会话ID: {session_id or ''}"
-    )
+    sid = session_id or str(uuid.uuid4())
+    existing = progress_store.get(sid)
+    if existing is not None and existing.start_requested:
+        log.warning(f"会话已执行过启动操作，跳过重复启动: {sid}")
+        return {
+            "session_id": sid,
+            "status": "already_started",
+            "message": f"session_id={sid} 已执行过启动操作",
+        }
+
     state = VideoEditState(
         prompt=prompt,
         image_input=image_input,
         video_keyword=video_keyword,
-        session_id=session_id or "",
+        session_id=sid,
         video_input=video_input,
     )
-    async with VideoFlowWorkflow() as wf:
-        return await wf.ainvoke(state)
+    progress_store.create_if_absent(sid)
+    progress_store.mark_start_requested(sid)
+    asyncio.create_task(_run_workflow_bg(state, sid))
+    log.info(f"工作流已启动（后台）: {sid}")
+    return {"session_id": sid, "status": "started"}
+
+
+async def _run_workflow_bg(state: Any, session_id: str) -> None:
+    """后台任务：运行工作流直到完成或中断，结果写入 progress_store。"""
+    try:
+        async with VideoFlowWorkflow() as wf:
+            result = await wf.ainvoke(state)
+
+        interrupted = result.get("__interrupt__")
+        if interrupted:
+            # 取第一个中断 payload（LangGraph 返回列表）
+            payload = interrupted[0].value if hasattr(interrupted[0], "value") else interrupted[0]
+            progress_store.set_interrupt_payload(session_id, payload)
+            progress_store.set_phase(session_id, WorkflowPhase.WAITING_APPROVAL)
+            log.info(f"[bg] 工作流中断，等待确认: {session_id}")
+        else:
+            progress_store.set_result(session_id, result)
+            log.info(f"[bg] 工作流完成: {session_id}")
+    except Exception as e:
+        log.error(f"[bg] 工作流异常: {session_id} → {e}")
+        progress_store.set_phase(session_id, WorkflowPhase.FAILED)
+        progress_store.set_result(session_id, {"error": str(e)})
 
 
 @mcp.tool()
@@ -104,32 +138,58 @@ async def tool_resume_video_workflow(
     session_id: str,
     approved: bool,
 ) -> dict:
-    """恢复被暂停的视频编辑工作流（第二阶段）。
+    """恢复被暂停的视频编辑工作流（第二阶段，后台执行）。
 
-    当 `tool_run_video_workflow` 返回 `__interrupt__` 时，
-    Agent 应展示预览给用户确认，然后调用此工具恢复工作流。
+    当 `tool_get_workflow_progress` 返回 phase=waiting_approval 时，
+    Agent 应展示 interrupt_payload 中的预览给用户确认，然后调用此工具。
+    工具立即返回，恢复在后台进行，可继续通过 `tool_get_workflow_progress` 轮询。
 
     Args:
         session_id: 第一阶段返回的会话 ID
         approved: 用户是否确认首片预览效果满意
     """
-    async with VideoFlowWorkflow() as wf:
-        return await wf.resume(session_id, {"approved": approved})
+    session = progress_store.get(session_id)
+    if session is None:
+        return {
+            "session_id": session_id,
+            "status": "not_found",
+            "message": f"session_id={session_id} 不存在，无法恢复",
+        }
+    if session.phase != WorkflowPhase.WAITING_APPROVAL:
+        return {
+            "session_id": session_id,
+            "status": "invalid_phase",
+            "message": (
+                f"session_id={session_id} 当前阶段为 {session.phase.value}，"
+                "仅 waiting_approval 阶段允许恢复"
+            ),
+            "phase": session.phase.value,
+        }
+    if session.resume_requested:
+        return {
+            "session_id": session_id,
+            "status": "already_resumed",
+            "message": f"session_id={session_id} 已执行过恢复操作",
+        }
+
+    progress_store.mark_resume_requested(session_id, approved)
+    asyncio.create_task(_resume_workflow_bg(session_id, {"approved": approved}))
+    log.info(f"工作流恢复已启动（后台）: {session_id}, approved={approved}")
+    return {"session_id": session_id, "status": "resuming"}
 
 
-@mcp.tool()
-async def tool_create_session() -> dict:
-    """创建一个新的工作流会话 ID。
-
-    Agent 必须在调用 `tool_run_video_workflow` 之前先调用此工具获取 session_id，
-    并将 session_id 告知用户，方便用户后续查询进度。
-
-    Returns:
-        包含 session_id 的字典
-    """
-    session_id = str(uuid.uuid4())[0:6]  # 生成一个简短的随机 session_id
-    log.info(f"创建新会话: {session_id}")
-    return {"session_id": session_id}
+async def _resume_workflow_bg(session_id: str, decision: dict) -> None:
+    """后台任务：从 SQLite checkpoint 恢复工作流。"""
+    try:
+        async with VideoFlowWorkflow() as wf:
+            result = await wf.resume(session_id, decision)
+        progress_store.set_result(session_id, result)
+        progress_store.set_phase(session_id, WorkflowPhase.COMPLETED)
+        log.info(f"[bg] 工作流恢复完成: {session_id}")
+    except Exception as e:
+        log.error(f"[bg] 工作流恢复异常: {session_id} → {e}")
+        progress_store.set_phase(session_id, WorkflowPhase.FAILED)
+        progress_store.set_result(session_id, {"error": str(e)})
 
 
 @mcp.tool()

@@ -5,7 +5,7 @@ from .base import file_content
 from videoflow.utils.logger_config import log
 from videoflow.utils.downloader.apis.api_client import MainAPIClient
 from videoflow.utils.downloader.core.downloader import VideoDownloader
-import os, aiofiles, httpx, base64, asyncio, ffmpeg
+import os, aiofiles, httpx, base64, asyncio, ffmpeg, uuid
 
 __all__ = ["video_processor"]
 
@@ -89,6 +89,42 @@ class VideoProcessor(file_processor):
         self._extensions: tuple[str, ...] = (".mp4", ".avi", ".mov")
         self.video_downloader = VideoDownloaderTab()
 
+    def _parse_fps(self, fps_str: str) -> float:
+        """将 ffprobe 帧率字符串安全解析为 float，避免 eval。"""
+        if not fps_str or fps_str == "0/0":
+            return 30.0
+        if "/" in fps_str:
+            num, den = fps_str.split("/", 1)
+            den_val = float(den) if float(den) != 0 else 1.0
+            return float(num) / den_val
+        return float(fps_str)
+
+    def _resolve_local_video_path(self, video: str) -> Path:
+        """支持纯文件名或绝对/相对本地路径。"""
+        p = Path(video)
+        if p.is_file():
+            return p.resolve()
+        return Path(self.file_writer_folder) / video
+
+    def _session_dir(self, session_id: str) -> Path:
+        sid = (session_id or "default").strip()
+        return Path(self.file_writer_folder) / "sessions" / sid
+
+    async def ensure_session_dirs(self, session_id: str) -> dict[str, str]:
+        root = self._session_dir(session_id)
+        dirs = {
+            "root": root,
+            "input": root / "input",
+            "slices": root / "slices",
+            "edited": root / "edited",
+            "final": root / "final",
+            "manifest": root / "manifest",
+            "temp": root / "temp",
+        }
+        for d in dirs.values():
+            Path(d).mkdir(parents=True, exist_ok=True)
+        return {k: str(v) for k, v in dirs.items()}
+
     async def read_file(self, filename: str, path: Optional[str] = None):
         log.info(
             f"读视频接受参数: 文件名：{filename}, 路径: {path or self.file_reader_folder}"
@@ -137,7 +173,15 @@ class VideoProcessor(file_processor):
         )
         return success, video_id
 
-    async def split_video(self, video_id: str, **kwargs):
+    async def split_video(
+        self,
+        video_id: str,
+        *,
+        start: Union[int, float],
+        end: Union[int, float],
+        session_id: Optional[str] = None,
+        slice_index: Optional[int] = None,
+    ) -> str:
         """Trim the input so that the output contains one continuous subpart of the input.
 
         Args:
@@ -153,183 +197,144 @@ class VideoProcessor(file_processor):
             start_frame: The number of the first frame that should be passed to the output.
             end_frame: The number of the first frame that should be dropped.
         """
-        video_path = await self.get_file_path(video_id)
-        arg = list(map(lambda x: str(x), kwargs.values()))
-        splited_video = "_".join(arg) + "_" + video_id
-        out = await self.get_file_path(splited_video)
+        video_path = self._resolve_local_video_path(video_id)
+        idx = slice_index if slice_index is not None else 0
+        start_ms = int(float(start) * 1000)
+        end_ms = int(float(end) * 1000)
+        slice_name = f"slice_{idx:03d}_{start_ms:08d}_{end_ms:08d}.mp4"
+
+        if session_id:
+            dirs = await self.ensure_session_dirs(session_id)
+            out_path = Path(dirs["slices"]) / slice_name
+        else:
+            out_path = Path(self.file_writer_folder) / slice_name
 
         def func():
             (
-                ffmpeg.input(video_path)
-                .trim(**kwargs)
-                .output(out)
+                ffmpeg.input(str(video_path), ss=float(start), to=float(end))
+                .output(
+                    str(out_path),
+                    vcodec="libx264",
+                    acodec="aac",
+                    pix_fmt="yuv420p",
+                    movflags="+faststart",
+                )
                 .overwrite_output()
-                .run()
+                .run(quiet=True)
             )
 
         await asyncio.to_thread(func)
-        return splited_video
+        return str(out_path)
 
     async def concatenate_video(
-        self, video_list: list[List], original_video: str
-    ) -> Annotated[str, "合并后的视频名"]:
-        """将多个视频合并为一个视频
-        video_list:[[[start_sec,end_sec],sliced-video,edited-sliced-video]]
-        original_video: 原视频
-        """
-        temp_new_name = original_video
-        temp_original_video = original_video
-        for item in video_list:
-            temp_new_name = "ed" + temp_new_name
-            await self.simple_concatenate_video(
-                temp_original_video,
-                item[2],
-                temp_new_name,
-                item[0][0],
-                item[0][1],
-            )
-            temp_original_video = temp_new_name
-        return temp_new_name
-
-    async def simple_concatenate_video(
         self,
-        original_video,
-        new_video,
-        output_video,
-        start_sec: int,
-        end_sec: int,
-        new_start_sec=0,
-    ):
+        video_list: list[List],
+        original_video: str,
+        session_id: Optional[str] = None,
+    ) -> Annotated[str, "合并后的视频名"]:
+        """将分片一次性拼接成最终视频（避免循环重编码）。
+
+        video_list: [ [[start,end], sliced_video, edited_sliced_video?], ... ]
+        优先使用 edited_sliced_video；若不存在则使用 sliced_video。
         """
-        简单替换：用新视频的片段替换原视频的指定时间段
-        """
-        original_path = await self.get_file_path(original_video)
-        new_path = await self.get_file_path(new_video)
-        output_path = await self.get_file_path(output_video)
+        if not video_list:
+            raise ValueError("video_list 不能为空")
 
-        def func():
-            try:
-                # 计算新视频使用时长
-                new_duration = end_sec - start_sec
+        original_path = self._resolve_local_video_path(original_video)
+        sid = session_id or uuid.uuid4().hex[:8]
+        dirs = await self.ensure_session_dirs(sid)
+        temp_dir = Path(dirs["temp"])
+        final_dir = Path(dirs["final"])
+        final_name = f"final_{sid}_{original_path.stem}.mp4"
+        final_path = final_dir / final_name
 
-                # 获取原视频信息
-                probe_original = ffmpeg.probe(original_path)
-                original_duration = float(probe_original["format"]["duration"])
+        probe_original = await asyncio.to_thread(ffmpeg.probe, str(original_path))
+        video_stream_original = next(
+            (s for s in probe_original["streams"] if s["codec_type"] == "video"),
+            None,
+        )
+        if video_stream_original is None:
+            raise ValueError(f"原视频缺少视频流: {original_path}")
+        original_width = int(video_stream_original["width"])
+        original_height = int(video_stream_original["height"])
+        original_fps = self._parse_fps(video_stream_original.get("r_frame_rate", "30/1"))
 
-                # 获取原视频参数
-                video_stream_original = next(
-                    (
-                        stream
-                        for stream in probe_original["streams"]
-                        if stream["codec_type"] == "video"
-                    ),
-                    None,
-                )
-                original_width = int(video_stream_original["width"])
-                original_height = int(video_stream_original["height"])
-                original_fps = (
-                    eval(video_stream_original["r"])
-                    if "r" in video_stream_original
-                    else 30.0
-                )
+        normalized_files: list[Path] = []
+        for i, item in enumerate(video_list):
+            selected = item[2] if len(item) >= 3 else item[1]
+            seg_path = self._resolve_local_video_path(cast(str, selected))
+            seg_probe = await asyncio.to_thread(ffmpeg.probe, str(seg_path))
+            seg_duration = float(seg_probe["format"].get("duration", 0.0) or 0.0)
 
-                # 获取新视频信息
-                probe_new = ffmpeg.probe(new_path)
-                video_stream_new = next(
-                    (
-                        stream
-                        for stream in probe_new["streams"]
-                        if stream["codec_type"] == "video"
-                    ),
-                    None,
-                )
+            seg_in = ffmpeg.input(str(seg_path))
+            seg_v = (
+                seg_in.video.filter("scale", original_width, original_height)
+                .filter("setsar", "1/1")
+                .filter("fps", fps=original_fps)
+            )
+            has_audio = any(s.get("codec_type") == "audio" for s in seg_probe["streams"])
+            if has_audio:
+                seg_a = seg_in.audio
+            else:
+                duration = seg_duration if seg_duration > 0 else 0.1
+                seg_a = ffmpeg.input(
+                    "anullsrc=channel_layout=stereo:sample_rate=48000",
+                    f="lavfi",
+                ).filter("atrim", duration=duration)
 
-                # 读取原视频
-                original = ffmpeg.input(original_path)
+            norm_path = temp_dir / f"norm_{i:03d}.mp4"
 
-                # 获取原视频前段（0到start_sec）
-                if start_sec > 0:
-                    part1 = original.trim(start=0, end=start_sec).setpts("PTS-STARTPTS")
-                else:
-                    part1 = None
-
-                # 读取新视频片段并统一参数
-                new_video_stream = ffmpeg.input(new_path)
-                part2 = (
-                    new_video_stream.trim(start=new_start_sec, duration=new_duration)
-                    .setpts("PTS-STARTPTS")
-                    .filter("scale", original_width, original_height)  # 统一分辨率
-                    .filter("setsar", "1/1")  # 统一像素宽高比
-                    .filter("fps", fps=original_fps)  # 统一帧率
-                )
-
-                # 获取原视频后段（end_sec到结束）
-                if end_sec < original_duration:
-                    part3 = original.trim(start=end_sec).setpts("PTS-STARTPTS")
-                else:
-                    part3 = None
-
-                # 拼接三段
-                inputs = []
-                if part1:
-                    inputs.append(part1)
-                inputs.append(part2)
-                if part3:
-                    inputs.append(part3)
-
-                if len(inputs) == 1:
-                    # 如果只有一段，直接输出
-                    output_stream = inputs[0]
-                else:
-                    # 多段拼接 - 只拼接视频流（因为新视频可能无音频）
-                    output_stream = ffmpeg.concat(*inputs, v=1, a=0)
-
-                # 音频处理：使用原视频完整音频（可选）
-                # 或者添加静音音频
-                if "audio" in [
-                    stream["codec_type"] for stream in probe_original["streams"]
-                ]:
-                    # 方法1：使用原视频完整音频
-                    audio_stream = original.audio
-                else:
-                    # 方法2：添加静音音频
-                    audio_stream = ffmpeg.input("anullsrc", f="lavfi").filter(
-                        "atrim", duration=original_duration
-                    )
-
-                # 输出 - 合并视频和音频
+            def _normalize():
                 (
                     ffmpeg.output(
-                        output_stream,
-                        audio_stream,
-                        output_path,
+                        seg_v,
+                        seg_a,
+                        str(norm_path),
                         vcodec="libx264",
                         acodec="aac",
+                        pix_fmt="yuv420p",
+                        movflags="+faststart",
                         shortest=None,
-                    )  # 以视频流结束为准
+                    )
                     .overwrite_output()
-                    .run()
+                    .run(quiet=True)
                 )
 
-                print(f"✓ 简单替换完成: {output_path}")
-                return True
+            await asyncio.to_thread(_normalize)
+            normalized_files.append(norm_path)
 
-            except Exception as e:
-                print(f"✗ 错误: {e}")
-                import traceback
+        concat_list_path = temp_dir / "concat_list.txt"
+        concat_content = "".join(
+            f"file '{p.as_posix()}'\n" for p in normalized_files
+        )
+        async with aiofiles.open(concat_list_path, "w", encoding="utf-8") as f:
+            await f.write(concat_content)
 
-                traceback.print_exc()
-                return False
+        def _concat():
+            (
+                ffmpeg.input(str(concat_list_path), format="concat", safe=0)
+                .output(
+                    str(final_path),
+                    vcodec="libx264",
+                    acodec="aac",
+                    pix_fmt="yuv420p",
+                    movflags="+faststart",
+                )
+                .overwrite_output()
+                .run(quiet=True)
+            )
 
-        return await asyncio.to_thread(func)
+        await asyncio.to_thread(_concat)
+        log.info(f"视频拼接完成: {final_path}")
+        return str(final_path)
 
     async def detect_video_len(
         self, video: str
     ) -> Annotated[int, "视频时长（整数秒）"]:
-        path = await self.get_file_path(video)
+        path = self._resolve_local_video_path(video)
 
         def func():
-            return ffmpeg.probe(path)
+            return ffmpeg.probe(str(path))
 
         probe = await asyncio.to_thread(func)
         duration_seconds = int(float(probe["format"]["duration"]))

@@ -348,7 +348,11 @@ class Gen4AlephRunway(VideoEditBase):
             return file_name
         elif file_name.startswith(("http", "https")):
             raise ValueError("runway模型只支持runway://开头的uri")
-        file = await get_file_path(file_name)
+        file_path = Path(file_name)
+        if file_path.is_file():
+            file = str(file_path.resolve())
+        else:
+            file = await get_file_path(file_name)
         response = await self.client.uploads.create_ephemeral(
             file=Path(file), timeout=self.timeout
         )

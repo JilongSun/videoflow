@@ -18,13 +18,15 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 - 视频编辑工作流只接受本地视频文件，不接受在线链接
 - 搜索、选择、下载素材与最终启动工作流是两段式协作
 - 所有异常、完成结果都按结构化返回处理
+- MCP 内部已包含错误重试与恢复机制，Agent 不做工作流重启、人工补偿重试等运维操作
+- Agent 仅负责：参数补全、状态查询、预览确认与结果回传
 
 ## 标准执行流程
 1. **参数检查与补全**
    先检查请求参数是否完整（至少包含图片输入、视频关键词，以及可用的本地视频输入方案）。参数缺失时，主动向用户追问，直到参数齐全。
-2. **创建会话 ID**
-   **必须**在启动工作流之前调用 `tool_create_session` 获取 `session_id`，
-   并**立即告知用户** session_id，方便用户后续查询进度。
+2. **启动后获取会话 ID**
+   调用 `tool_run_video_workflow` 后，返回值会包含 `status=started` 和 `session_id`。
+   Agent **必须立即告知用户** session_id，方便用户后续查询进度。
 3. **判断视频来源路径**
    如果用户要从抖音找素材，先走"搜索/选择/下载"路径；如果用户已经提供本地视频，直接走"启动工作流"路径。
 4. **路径 A：搜索并下载抖音视频**
@@ -32,19 +34,21 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 5. **路径 B：直接使用本地视频**
    如果用户已经提供本地视频文件名或本地路径，跳过搜索和下载。
 6. **启动视频编辑工作流**
-   拿到本地 `video_input` 后，调用 `tool_run_video_workflow`，**必须传入步骤 2 获取的 session_id**。
+   拿到本地 `video_input` 后，调用 `tool_run_video_workflow`。
+   若返回 `status=started`，Agent 立刻把返回的 `session_id` 告知用户。
 7. **首片预览确认（视频 > 5 秒时）**
-   当视频超过 5 秒时，工作流会先处理第一个分片并返回 `__interrupt__`，其中包含预览视频文件名。
-   Agent 应将预览结果展示给用户，用户确认满意后调用 `tool_resume_video_workflow` 继续处理剩余分片。
+   当视频超过 5 秒时，后台工作流会先处理第一个分片并进入 `waiting_approval`。
+   Agent 调用 `tool_get_workflow_progress` 获取 `interrupt_payload` 中的预览信息，展示给用户确认。
+   用户确认满意后调用 `tool_resume_video_workflow` 继续处理剩余分片。
 8. **返回结果**
    收到完成结果后，向用户反馈最终产物或错误信息。
 9. **用户查询进度**
    当用户通过 session_id 询问进度时，调用 `tool_get_workflow_progress` 返回当前阶段和完成百分比。
 
 ## session_id 管理
-- Agent **必须**在启动工作流之前调用 `tool_create_session` 获取 `session_id`。
+- Agent 在调用 `tool_run_video_workflow` 后，会收到 `session_id`。
 - 获取后**必须立即告知用户** session_id，方便用户后续询问进度。
-- 将获取的 `session_id` 传入 `tool_run_video_workflow` 的 `session_id` 参数。
+- 如需复用历史会话，可将已有 `session_id` 传入 `tool_run_video_workflow` 的 `session_id` 参数。
 - 用户随时可以通过 session_id 询问进度，Agent 调用 `tool_get_workflow_progress` 查询。
 
 ## 工作流边界
@@ -83,15 +87,6 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 > "Replace the cat in the video with the cat in the picture"
 
 ## MCP 调用模板
-
-### 创建会话（启动工作流前必须调用）
-```json
-{
-   "tool": "tool_create_session",
-   "args": {}
-}
-```
-返回值：`{"session_id": "<uuid>"}`。Agent 必须将 session_id 告知用户。
 
 ### 查询进度
 ```json
@@ -148,16 +143,17 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
       "prompt": "<编辑提示词（见提示词构造规则）>",
       "image_input": "<参考图片URL或文件名，不使用参考图片时传空字符串>",
       "video_keyword": "<video_keyword>",
-      "video_input": "<local_video_file>",
-      "session_id": "<optional_session_id>"
+         "video_input": "<local_video_file>",
+         "session_id": "<optional_session_id，用于复用历史会话>"
    }
 }
 ```
 
 ### 启动返回处理
-- 视频 ≤ 5 秒：直接返回完成结果，无需额外操作。
-- 视频 > 5 秒：返回值中包含 `__interrupt__` 字段，其中有首片预览视频文件名和剩余分片数。
-  Agent 应展示预览给用户确认，然后调用 `tool_resume_video_workflow`。
+- 返回 `status=started` 后，Agent 必须立即告知用户 `session_id`。
+- 视频 ≤ 5 秒：后台会直接完成，Agent 可通过 `tool_get_workflow_progress` 轮询完成状态与结果。
+- 视频 > 5 秒：后台会进入 `waiting_approval`，并在进度中返回 `interrupt_payload`（首片预览信息）。
+   Agent 应展示预览给用户确认，然后调用 `tool_resume_video_workflow`。
 
 ### 恢复调用（视频 > 5 秒时必须）
 ```json
@@ -175,22 +171,22 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 ## 两种启动方式示例
 
 ### 方式 1：先搜索抖音视频，再启动工作流
-1. 调用 `tool_create_session`，获取 session_id 并告知用户
-2. 调用 `tool_search_video`
-3. 将候选列表展示给用户
-4. 用户选定候选后，调用 `tool_download_video`
-5. 下载成功后，拿到本地 `video_input`
-6. 调用 `tool_run_video_workflow`（传入 session_id）
-7. 如果返回 `__interrupt__`，展示首片预览给用户
+1. 调用 `tool_search_video`
+2. 将候选列表展示给用户
+3. 用户选定候选后，调用 `tool_download_video`
+4. 下载成功后，拿到本地 `video_input`
+5. 调用 `tool_run_video_workflow`
+6. 返回 `started` 后，立即把 `session_id` 告知用户
+7. 若进度为 `waiting_approval`，展示首片预览给用户
 8. 用户确认后调用 `tool_resume_video_workflow`
 9. 用户随时可查询进度：调用 `tool_get_workflow_progress`
 
 ### 方式 2：用户直接提供本地视频，再启动工作流
-1. 调用 `tool_create_session`，获取 session_id 并告知用户
-2. 确认用户提供的是本地视频文件名或本地路径
-3. 收集 `image_input` 和 `video_keyword`
-4. 调用 `tool_run_video_workflow`（传入 session_id）
-5. 如果返回 `__interrupt__`，展示首片预览给用户
+1. 确认用户提供的是本地视频文件名或本地路径
+2. 收集 `image_input` 和 `video_keyword`
+3. 调用 `tool_run_video_workflow`
+4. 返回 `started` 后，立即把 `session_id` 告知用户
+5. 若进度为 `waiting_approval`，展示首片预览给用户
 6. 用户确认后调用 `tool_resume_video_workflow`
 7. 用户随时可查询进度：调用 `tool_get_workflow_progress`
 
@@ -214,9 +210,9 @@ description: 用于通过 VideoFlow MCP 完成视频编辑与产品替换工作�
 - 视频编辑已完成，输出结果为：`<result_file_or_url>`
 
 ## 异常与重试策略
-- `status = error` 且可重试错误（网络抖动、下载失败等）：
-   - 最多重试 2 次
-   - 每次重试前给出简短提示
+- `status = error`：
+   - 不在 Agent 侧执行自动重试、重启工作流或手动补偿逻辑
+   - 直接向用户反馈 MCP 返回的错误信息，并引导用户按需调整输入参数后重新发起业务请求
 - 搜索结果为空或下载失败：
    - 先提示用户更换关键词，或重新选择候选后重试
 - 参数缺失或格式错误：
