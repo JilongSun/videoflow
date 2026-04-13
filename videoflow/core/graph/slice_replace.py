@@ -1,74 +1,31 @@
-from typing import Dict, Any, Optional, List, Annotated, cast
+from typing import Any, Dict, Optional, List, cast
 from pathlib import Path
 from langgraph.graph import StateGraph, END, START
-from langgraph.types import interrupt, Command
+from langgraph.types import Command, interrupt
 from videoflow.utils import log
-from pydantic import BaseModel, Field
 from videoflow.utils.file_processor import (
     video_processor,
     materialize_file,
     get_file_path,
 )
-from .chatmodel import gen4aleph
-from .progress import progress_store, WorkflowPhase, SliceStatus
-import asyncio, uuid, math, json, shutil
+from videoflow.core.chatmodel import gen4aleph
+from videoflow.core.progress import progress_store, WorkflowPhase, SliceStatus
+import asyncio
+import uuid
+import math
+import json
+import shutil
+
+from .state import VideoEditState
 
 
 MAX_SLICE_SEC = 5  # Runway Gen4Aleph 单次处理上限
 
 
-class VideoEditState(BaseModel):
-    """
-    视频编辑工作流状态。
-    第一层（MVP）：固定 5 秒切分 → 全量送 Runway → 拼接
-    第二层（质量控制）：先处理首片 → interrupt 等待人工确认 → 批量处理剩余
-    """
+class SliceReplaceWorkflow:
+    """特征：固定 5 秒切片 + 分片替换 + 拼接。"""
 
-    # --- runway inputs ---
-    image_input: str = Field(
-        ...,
-        description="用户上传的图片url (HTTP)或本地图片路径",
-    )
-    video_input: Annotated[str, "本地视频路径"]
-    prompt: str = Field(
-        ...,
-        description="用户输入的编辑提示，用于指导视频编辑模型",
-    )
-
-    # --- business parameters ---
-    video_keyword: str = Field(
-        ...,
-        description="用户输入的视频关键词, 用于素材检索或视频分析",
-    )
-    session_id: str = Field(
-        default="",
-        description="工作流会话ID，用于标识一次执行",
-    )
-    video_time_slice: Annotated[
-        Optional[List[List]],
-        "[[[start_sec, end_sec], sliced_video, edited_sliced_video]]",
-    ] = None
-    preview_slice: Annotated[
-        Optional[str],
-        "首片编辑结果文件名，用于人工预览确认",
-    ] = None
-    work_dirs: Optional[Dict[str, str]] = None
-    manifest_path: Optional[str] = None
-    slice_manifest: Optional[List[Dict[str, Any]]] = None
-    result: Optional[str] = None
-    complete: Annotated[
-        Optional[bool],
-        "是否完成视频编辑工作流",
-    ] = None
-
-
-class VideoFlowWorkflow:
-    """视频处理工作流框架
-
-    流程: prepare_media_inputs → split_video → preview_first_slice → object_replace → END
-                                              ↑
-                                        interrupt() 等待人工确认
-    """
+    name = "slice_replace"
 
     def __init__(self):
         self.graph = StateGraph(VideoEditState)
@@ -100,16 +57,14 @@ class VideoFlowWorkflow:
                 "缺少依赖 langgraph-checkpoint-sqlite，请先执行 `uv sync` 或安装该包"
             ) from e
 
-        project_root = Path(__file__).resolve().parents[2]
+        project_root = Path(__file__).resolve().parents[3]
         checkpoint_dir = project_root / ".langgraph"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_db = checkpoint_dir / "checkpoints.db"
         log.info(f"使用 SQLite 持久化检查点: {checkpoint_db}")
-        # from_conn_string 返回 async context manager
         return AsyncSqliteSaver.from_conn_string(str(checkpoint_db))
 
-    def _setup_workflow(self):
-        """设置工作流节点和边"""
+    def _setup_workflow(self) -> None:
         self.graph.add_node("prepare_media_inputs", self.prepare_media_inputs)
         self.graph.add_node("split_video", self.split_video)
         self.graph.add_node("preview_first_slice", self.preview_first_slice)
@@ -120,8 +75,6 @@ class VideoFlowWorkflow:
         self.graph.add_edge("split_video", "preview_first_slice")
         self.graph.add_edge("preview_first_slice", "object_replace")
         self.graph.add_edge("object_replace", END)
-
-    # ── 节点实现 ──────────────────────────────────────
 
     async def _write_video_to_path(self, path: str, content: str) -> None:
         p = Path(path)
@@ -139,7 +92,7 @@ class VideoFlowWorkflow:
             "result": state.result,
         }
 
-        def _dump():
+        def _dump() -> None:
             p = Path(state.manifest_path or "")
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -170,11 +123,9 @@ class VideoFlowWorkflow:
             Path(state.work_dirs["manifest"]) / "workflow_manifest.json"
         )
 
-        # 先使用现有 provider 落地，再复制进当前 session/input，实现会话隔离
         image_name = await materialize_file(state.image_input, "image")
         video_name = await materialize_file(state.video_input, "video")
 
-        # 通过 Path 解析绝对路径：优先绝对路径，其次 outputs 下的文件
         image_src_path = Path(image_name)
         if not image_src_path.is_file():
             image_src_path = Path(await get_file_path(image_name))
@@ -205,8 +156,7 @@ class VideoFlowWorkflow:
         total_sec = await video_processor.detect_video_len(state.video_input)
 
         if total_sec <= MAX_SLICE_SEC:
-            log.info(f"视频时长 {total_sec}s ≤ {MAX_SLICE_SEC}s，无需分割")
-            # 无分片，初始化为单片进度
+            log.info(f"视频时长 {total_sec}s <= {MAX_SLICE_SEC}s，无需分割")
             progress_store.init_slices(state.session_id, [[0, total_sec]])
             state.slice_manifest = [
                 {
@@ -222,7 +172,6 @@ class VideoFlowWorkflow:
             await self._persist_manifest(state)
             return state
 
-        # 按固定 5 秒切分
         num_slices = math.ceil(total_sec / MAX_SLICE_SEC)
         log.info(f"视频时长 {total_sec}s，将切为 {num_slices} 个分片")
 
@@ -260,14 +209,7 @@ class VideoFlowWorkflow:
         return state
 
     async def preview_first_slice(self, state: VideoEditState) -> VideoEditState:
-        """处理首片并 interrupt 等待人工确认效果
-
-        - 视频 ≤ 5s (无分片): 直接处理，不中断
-        - 视频 > 5s (有分片): 先处理第 1 片，interrupt 展示预览，
-          Agent 确认后再继续批量处理剩余片段
-        """
         if not state.video_time_slice:
-            # 无分片，跳过预览直接走 object_replace
             return state
 
         progress_store.set_phase(state.session_id, WorkflowPhase.PREVIEW)
@@ -315,7 +257,6 @@ class VideoFlowWorkflow:
         log.info(f"首片预览已生成: {edited_path}，等待人工确认")
         progress_store.set_phase(state.session_id, WorkflowPhase.WAITING_APPROVAL)
 
-        # interrupt: 暂停工作流，将预览信息返回给 Agent
         decision = interrupt(
             {
                 "preview_video": edited_path,
@@ -326,7 +267,6 @@ class VideoFlowWorkflow:
             }
         )
 
-        # Agent 通过 Command(resume={"approved": True/False}) 恢复
         if not decision.get("approved", False):
             state.complete = False
             state.result = "用户拒绝了首片预览效果，工作流中止"
@@ -339,13 +279,6 @@ class VideoFlowWorkflow:
         return state
 
     async def object_replace(self, state: VideoEditState) -> VideoEditState:
-        """AI 视频编辑：替换视频中的物体
-
-        - 无分片: 直接处理整个视频
-        - 有分片: 首片已在 preview_first_slice 中处理完成，
-          这里只处理剩余分片，然后拼接
-        """
-        # 如果用户拒绝了预览，直接结束
         if state.complete is False:
             return state
 
@@ -355,7 +288,6 @@ class VideoFlowWorkflow:
         state.work_dirs = work_dirs
 
         if not state.video_time_slice:
-            # 视频 ≤ 5s，直接处理
             log.info(f"视频无需分割，直接编辑: {state.video_input}")
             progress_store.set_phase(state.session_id, WorkflowPhase.BATCH_PROCESSING)
             progress_store.update_slice(state.session_id, 0, SliceStatus.PROCESSING)
@@ -378,9 +310,7 @@ class VideoFlowWorkflow:
                     await self._persist_manifest(state)
                 raise
 
-            final_path = str(
-                Path(work_dirs["final"]) / f"final_{state.session_id}.mp4"
-            )
+            final_path = str(Path(work_dirs["final"]) / f"final_{state.session_id}.mp4")
             state.result = final_path
             await self._write_video_to_path(final_path, cast(str, res.content))
             progress_store.update_slice(state.session_id, 0, SliceStatus.COMPLETED)
@@ -390,12 +320,9 @@ class VideoFlowWorkflow:
                 await self._persist_manifest(state)
 
         else:
-            # 首片已在 preview_first_slice 中完成，处理剩余分片
             remaining = state.video_time_slice[1:]
             if remaining:
-                progress_store.set_phase(
-                    state.session_id, WorkflowPhase.BATCH_PROCESSING
-                )
+                progress_store.set_phase(state.session_id, WorkflowPhase.BATCH_PROCESSING)
                 log.info(f"开始并行处理剩余 {len(remaining)} 个分片")
 
                 async def _process_slice(idx: int, slice_video: str):
@@ -430,14 +357,12 @@ class VideoFlowWorkflow:
                 for i, (res, slice_info) in enumerate(zip(results, remaining), start=1):
                     if isinstance(res, BaseException):
                         log.error(
-                            f"分片编辑失败: {slice_info[1]} "
-                            f"({slice_info[0]}), 错误: {res}"
+                            f"分片编辑失败: {slice_info[1]} ({slice_info[0]}), 错误: {res}"
                         )
                         progress_store.set_phase(state.session_id, WorkflowPhase.FAILED)
                         await self._persist_manifest(state)
                         raise ValueError(
-                            f"分片编辑失败: {slice_info[1]} ({slice_info[0]}), "
-                            f"错误: {res}"
+                            f"分片编辑失败: {slice_info[1]} ({slice_info[0]}), 错误: {res}"
                         )
                     edited_video = res
                     start, end = slice_info[0]
@@ -456,7 +381,6 @@ class VideoFlowWorkflow:
                         state.slice_manifest[i]["edited_video"] = edited_path
                 await self._persist_manifest(state)
 
-            # 拼接所有分片（包括已处理的首片）
             progress_store.set_phase(state.session_id, WorkflowPhase.CONCATENATING)
             new_video = await video_processor.concatenate_video(
                 state.video_time_slice,
@@ -470,17 +394,14 @@ class VideoFlowWorkflow:
         await self._persist_manifest(state)
         return state
 
-    # ── 编译与执行 ──────────────────────────────────────
-
     def compile(self, checkpointer: Optional[Any] = None):
         if checkpointer is None:
             raise ValueError("compile 需要已初始化的 checkpointer")
         return self.graph.compile(checkpointer=checkpointer)
 
     async def ainvoke(self, state: VideoEditState) -> Dict[str, Any]:
-        """启动视频编辑工作流（第一阶段调用）"""
         if self.workflow is None:
-            raise RuntimeError("请通过 async with VideoFlowWorkflow() 使用")
+            raise RuntimeError("请通过 async with SliceReplaceWorkflow() 使用")
         session_id = state.session_id or str(uuid.uuid4())
         state.session_id = session_id
         if progress_store.get(session_id) is None:
@@ -489,13 +410,11 @@ class VideoFlowWorkflow:
         return await self.workflow.ainvoke(state, config)  # type: ignore
 
     async def resume(self, session_id: str, decision: Dict[str, Any]) -> Dict[str, Any]:
-        """恢复被 interrupt 暂停的工作流（第二阶段调用）
-
-        Args:
-            session_id: 工作流会话ID（与第一阶段相同）
-            decision: 人工确认结果，如 {"approved": True}
-        """
         if self.workflow is None:
-            raise RuntimeError("请通过 async with VideoFlowWorkflow() 使用")
+            raise RuntimeError("请通过 async with SliceReplaceWorkflow() 使用")
         config = {"configurable": {"thread_id": session_id}}
         return await self.workflow.ainvoke(Command(resume=decision), config)  # type: ignore
+
+
+class VideoFlowWorkflow(SliceReplaceWorkflow):
+    """兼容旧导出名称，等价于 SliceReplaceWorkflow。"""
