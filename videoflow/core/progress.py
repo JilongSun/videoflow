@@ -31,7 +31,7 @@ class WorkflowPhase(str, Enum):
 
 class SliceProgress(BaseModel):
     index: int
-    time_range: List[int]
+    time_range: List[float]
     status: SliceStatus = SliceStatus.PENDING
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -50,6 +50,8 @@ class WorkflowProgress(BaseModel):
     updated_at: str = Field(default_factory=lambda: _now())
     interrupt_payload: Optional[Dict[str, Any]] = None
     result: Optional[Dict[str, Any]] = None
+    model_type: Optional[str] = None
+    model_task: Optional[Dict[str, Any]] = None
 
 
 def _now() -> str:
@@ -85,7 +87,7 @@ class ProgressStore:
         p.updated_at = _now()
         log.info(f"[progress] {session_id} phase → {phase.value}")
 
-    def init_slices(self, session_id: str, time_ranges: List[List[int]]) -> None:
+    def init_slices(self, session_id: str, time_ranges: List[List[float]]) -> None:
         p = self._store.get(session_id)
         if not p:
             return
@@ -145,6 +147,10 @@ class ProgressStore:
             summary["interrupt_payload"] = p.interrupt_payload
         if p.result is not None:
             summary["result"] = p.result
+        if p.model_type is not None:
+            summary["model_type"] = p.model_type
+        if p.model_task is not None:
+            summary["model_task"] = p.model_task
         return summary
 
     def set_interrupt_payload(self, session_id: str, payload: Dict[str, Any]) -> None:
@@ -159,6 +165,20 @@ class ProgressStore:
         if not p:
             return
         p.result = result
+        p.updated_at = _now()
+
+    def set_model_type(self, session_id: str, model_type: str) -> None:
+        p = self._store.get(session_id)
+        if not p:
+            return
+        p.model_type = model_type
+        p.updated_at = _now()
+
+    def set_model_task(self, session_id: str, model_task: Dict[str, Any]) -> None:
+        p = self._store.get(session_id)
+        if not p:
+            return
+        p.model_task = model_task
         p.updated_at = _now()
 
     def mark_start_requested(self, session_id: str) -> bool:

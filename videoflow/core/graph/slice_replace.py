@@ -8,7 +8,7 @@ from videoflow.utils.file_processor import (
     materialize_file,
     get_file_path,
 )
-from videoflow.core.chatmodel import gen4aleph
+from videoflow.core.chatmodel import gen4aleph, wan_videoedit27
 from videoflow.core.progress import progress_store, WorkflowPhase, SliceStatus
 import asyncio
 import uuid
@@ -19,11 +19,20 @@ import shutil
 from .state import VideoEditState
 
 
-MAX_SLICE_SEC = 5  # Runway Gen4Aleph 单次处理上限
+MODEL_PROFILES: Dict[str, Dict[str, Any]] = {
+    "wan2.7-videoedit": {
+        "max_slice_sec": 10,
+        "min_slice_sec": 2,
+    },
+    "runway-gen4aleph": {
+        "max_slice_sec": 5,
+        "min_slice_sec": 1,
+    },
+}
 
 
 class SliceReplaceWorkflow:
-    """特征：固定 5 秒切片 + 分片替换 + 拼接。"""
+    """特征：模型可选 + 模型约束驱动切片 + 分片替换 + 拼接。"""
 
     name = "slice_replace"
 
@@ -76,6 +85,103 @@ class SliceReplaceWorkflow:
         self.graph.add_edge("preview_first_slice", "object_replace")
         self.graph.add_edge("object_replace", END)
 
+    def _normalize_model_type(self, model_type: Optional[str]) -> str:
+        raw = (model_type or "wan2.7-videoedit").strip().lower()
+        if raw in {"wan2.7-videoedit", "wan27", "wan_videoedit27", "wanvideoedit2.7"}:
+            return "wan2.7-videoedit"
+        if raw in {"runway", "runway-gen4aleph", "gen4_aleph", "gen4aleph"}:
+            return "runway-gen4aleph"
+        raise ValueError(
+            f"不支持的 model_type: {model_type}，当前支持 wan2.7-videoedit/runway-gen4aleph"
+        )
+
+    def _model_profile(self, model_type: str) -> Dict[str, Any]:
+        return MODEL_PROFILES[self._normalize_model_type(model_type)]
+
+    def _build_time_ranges(
+        self,
+        total_sec: float,
+        max_slice_sec: int,
+        min_slice_sec: int,
+    ) -> List[List[float]]:
+        if total_sec <= 0:
+            raise ValueError(f"视频时长异常: {total_sec}")
+        if total_sec < min_slice_sec:
+            raise ValueError(
+                f"当前模型要求最短 {min_slice_sec}s，输入视频仅 {total_sec:.3f}s"
+            )
+
+        ranges: List[List[float]] = []
+        start = 0.0
+        while start < total_sec:
+            end = min(start + max_slice_sec, total_sec)
+            ranges.append([start, end])
+            start = end
+
+        if len(ranges) > 1:
+            last_dur = ranges[-1][1] - ranges[-1][0]
+            if last_dur < min_slice_sec:
+                need = min_slice_sec - last_dur
+                prev_dur = ranges[-2][1] - ranges[-2][0]
+                if prev_dur - need < min_slice_sec:
+                    raise ValueError(
+                        "无法在满足最小分片时长约束下切分视频，"
+                        f"total={total_sec:.3f}s, min_slice={min_slice_sec}s"
+                    )
+                ranges[-2][1] -= need
+                ranges[-1][0] -= need
+
+        return ranges
+
+    async def _invoke_selected_model(
+        self,
+        state: VideoEditState,
+        *,
+        video_path: str,
+        slice_index: int,
+        start: float,
+        end: float,
+    ):
+        model_type = self._normalize_model_type(state.model_type)
+        model_options = state.model_options or {}
+
+        def _progress_cb(update: Dict[str, Any]) -> None:
+            progress_store.set_model_task(
+                state.session_id,
+                {
+                    "model_type": model_type,
+                    "slice_index": slice_index,
+                    "time_range": [start, end],
+                    "task_id": update.get("task_id"),
+                    "task_status": update.get("task_status"),
+                    "video_url": update.get("video_url"),
+                },
+            )
+
+        if model_type == "wan2.7-videoedit":
+            return await wan_videoedit27.ainvoke(
+                prompt=state.prompt,
+                image=[state.image_input],
+                video=video_path,
+                negative_prompt=model_options.get("negative_prompt"),
+                resolution=model_options.get("resolution", "1080P"),
+                duration=0,
+                ratio=model_options.get("ratio"),
+                audio_setting=model_options.get("audio_setting", "origin"),
+                prompt_extend=model_options.get("prompt_extend", False),
+                watermark=model_options.get("watermark", False),
+                seed=model_options.get("seed"),
+                progress_callback=_progress_cb,
+            )
+        if model_type == "runway-gen4aleph":
+            return await gen4aleph.ainvoke(
+                state.prompt,
+                [state.image_input],
+                video_path,
+            )
+
+        raise ValueError(f"不支持的 model_type: {model_type}")
+
     async def _write_video_to_path(self, path: str, content: str) -> None:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +194,8 @@ class SliceReplaceWorkflow:
             "session_id": state.session_id,
             "video_input": state.video_input,
             "prompt": state.prompt,
+            "model_type": state.model_type,
+            "model_options": state.model_options,
             "slices": state.slice_manifest,
             "result": state.result,
         }
@@ -117,6 +225,8 @@ class SliceReplaceWorkflow:
 
     async def prepare_media_inputs(self, state: VideoEditState) -> VideoEditState:
         """统一素材落地并归档到会话目录。"""
+        state.model_type = self._normalize_model_type(state.model_type)
+        progress_store.set_model_type(state.session_id, state.model_type)
         progress_store.set_phase(state.session_id, WorkflowPhase.PREPARING)
         state.work_dirs = await video_processor.ensure_session_dirs(state.session_id)
         state.manifest_path = str(
@@ -151,18 +261,25 @@ class SliceReplaceWorkflow:
         return state
 
     async def split_video(self, state: VideoEditState) -> VideoEditState:
-        """固定 5 秒等分切割视频"""
+        """按模型约束切割视频。"""
         progress_store.set_phase(state.session_id, WorkflowPhase.SPLITTING)
         total_sec = await video_processor.detect_video_len(state.video_input)
+        profile = self._model_profile(state.model_type)
+        max_slice_sec = int(profile["max_slice_sec"])
+        min_slice_sec = int(profile["min_slice_sec"])
 
-        if total_sec <= MAX_SLICE_SEC:
-            log.info(f"视频时长 {total_sec}s <= {MAX_SLICE_SEC}s，无需分割")
-            progress_store.init_slices(state.session_id, [[0, total_sec]])
+        time_ranges = self._build_time_ranges(total_sec, max_slice_sec, min_slice_sec)
+
+        if len(time_ranges) == 1:
+            log.info(
+                f"视频时长 {total_sec}s 满足单片处理（model={state.model_type}, max={max_slice_sec}s）"
+            )
+            progress_store.init_slices(state.session_id, [time_ranges[0]])
             state.slice_manifest = [
                 {
                     "index": 0,
-                    "start": 0,
-                    "end": total_sec,
+                    "start": time_ranges[0][0],
+                    "end": time_ranges[0][1],
                     "source_video": state.video_input,
                     "edited_video": None,
                     "status": "pending",
@@ -172,15 +289,14 @@ class SliceReplaceWorkflow:
             await self._persist_manifest(state)
             return state
 
-        num_slices = math.ceil(total_sec / MAX_SLICE_SEC)
-        log.info(f"视频时长 {total_sec}s，将切为 {num_slices} 个分片")
+        num_slices = len(time_ranges)
+        log.info(
+            f"视频时长 {total_sec}s，将按 model={state.model_type} 切为 {num_slices} 个分片"
+        )
 
         temp_list = []
-        time_ranges = []
         manifest_items: List[Dict[str, Any]] = []
-        for i in range(num_slices):
-            start = i * MAX_SLICE_SEC
-            end = min((i + 1) * MAX_SLICE_SEC, total_sec)
+        for i, (start, end) in enumerate(time_ranges):
             new_video = await video_processor.split_video(
                 state.video_input,
                 start=start,
@@ -189,7 +305,6 @@ class SliceReplaceWorkflow:
                 slice_index=i,
             )
             temp_list.append([[start, end], new_video])
-            time_ranges.append([start, end])
             manifest_items.append(
                 {
                     "index": i,
@@ -204,7 +319,7 @@ class SliceReplaceWorkflow:
 
         state.video_time_slice = temp_list
         state.slice_manifest = manifest_items
-        progress_store.init_slices(state.session_id, time_ranges)
+        progress_store.init_slices(state.session_id, [[r[0], r[1]] for r in time_ranges])
         await self._persist_manifest(state)
         return state
 
@@ -222,8 +337,12 @@ class SliceReplaceWorkflow:
 
         progress_store.update_slice(state.session_id, 0, SliceStatus.PROCESSING)
         try:
-            res = await gen4aleph.ainvoke(
-                state.prompt, [state.image_input], first_slice[1]
+            res = await self._invoke_selected_model(
+                state,
+                video_path=first_slice[1],
+                slice_index=0,
+                start=float(first_slice[0][0]),
+                end=float(first_slice[0][1]),
             )
             if res.content is None:
                 raise ValueError(f"首片编辑失败: {first_slice[1]}")
@@ -292,10 +411,12 @@ class SliceReplaceWorkflow:
             progress_store.set_phase(state.session_id, WorkflowPhase.BATCH_PROCESSING)
             progress_store.update_slice(state.session_id, 0, SliceStatus.PROCESSING)
             try:
-                res = await gen4aleph.ainvoke(
-                    state.prompt,
-                    [state.image_input],
-                    state.video_input,
+                res = await self._invoke_selected_model(
+                    state,
+                    video_path=state.video_input,
+                    slice_index=0,
+                    start=0.0,
+                    end=float(await video_processor.detect_video_len(state.video_input)),
                 )
                 if res.content is None:
                     raise ValueError("视频编辑失败")
@@ -330,8 +451,15 @@ class SliceReplaceWorkflow:
                         state.session_id, idx, SliceStatus.PROCESSING
                     )
                     try:
-                        r = await gen4aleph.ainvoke(
-                            state.prompt, [state.image_input], slice_video
+                        if state.video_time_slice is None:
+                            raise ValueError("video_time_slice 为空，无法继续分片处理")
+                        tr = state.video_time_slice[idx][0]
+                        r = await self._invoke_selected_model(
+                            state,
+                            video_path=slice_video,
+                            slice_index=idx,
+                            start=float(tr[0]),
+                            end=float(tr[1]),
                         )
                         if r.content is None:
                             raise ValueError(f"分片编辑返回空结果: {slice_video}")

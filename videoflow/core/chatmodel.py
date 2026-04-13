@@ -96,14 +96,42 @@ class VideoEditBase(BaseChatModel, ModelSettings, ABC):
         **kwargs: Any,
     ) -> ChatResult: ...
 
-    async def _get_task_result(self, task_id: str) -> Annotated[bool, "是否完成"]:
+    async def _get_task_result(self, task_id: str) -> Dict[str, Any]:
         raise NotImplementedError("请实现 _get_task_result 方法")
 
-    async def _wait_for_task_completion(self, task_id: str):
-        while True:
+    async def _wait_for_task_completion(
+        self,
+        task_id: str,
+        *,
+        poll_interval: int = 5,
+        timeout_seconds: int = 1800,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
+    ) -> Dict[str, Any]:
+        elapsed = 0
+        while elapsed <= timeout_seconds:
             result = await self._get_task_result(task_id)
-            if result:
-                break
+            status = result.get("task_status") or result.get("status")
+
+            if progress_callback is not None:
+                update = {
+                    "task_id": task_id,
+                    "task_status": status,
+                    "video_url": result.get("video_url"),
+                    "raw": result,
+                }
+                maybe_awaitable = progress_callback(update)
+                if asyncio.iscoroutine(maybe_awaitable):
+                    await maybe_awaitable
+
+            if status == "SUCCEEDED":
+                return result
+            if status in {"FAILED", "CANCELED", "UNKNOWN"}:
+                raise ValueError(f"任务 {task_id} 失败，状态={status}, 详情={result}")
+
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+        raise TimeoutError(f"任务 {task_id} 轮询超时，超过 {timeout_seconds}s")
 
     async def _get_urls(
         self, file_names: Union[List[str], str]
@@ -211,6 +239,9 @@ class WanxDashscope(VideoEditBase):
         **kwargs: Any,
     ) -> ChatResult:
         temp = json.loads(cast(str, messages[-1].content))
+        progress_callback = cast(
+            Optional[Callable[[Dict[str, Any]], Any]], kwargs.get("progress_callback")
+        )
         prompt: str = temp["prompt"]
         image: List[str] = temp["image"]
         video: str = temp["video"]
@@ -277,24 +308,30 @@ class WanxDashscope(VideoEditBase):
                 f"wanx2.1-vace 请求失败: {response.status_code} {response.text}"
             )
         res: dict = response.json()
-        task_id = None
-        if self.if_taskid:
-            task_id = res.get("output", {}).get("task_id")
-            log.info(f"task_id: {task_id}")
-            if not task_id:
-                raise ValueError(f"wanx2.1-vace 未返回 task_id: {res}")
+        task_id = res.get("output", {}).get("task_id")
+        if not task_id:
+            raise ValueError(f"wanx2.1-vace 未返回 task_id: {res}")
+
+        polled = await self._wait_for_task_completion(
+            task_id,
+            progress_callback=progress_callback,
+        )
+        video_url = polled.get("video_url")
+        if not video_url:
+            raise ValueError(f"wanx2.1-vace 任务成功但未返回 video_url: {polled}")
 
         return ChatResult(
             generations=[
                 ChatGeneration(
                     message=BaseMessage(
-                        content=task_id if task_id else "error", type="video_edit,wanx"
+                        content=video_url,
+                        type="video_edit,wanx",
                     )
                 )
             ]
         )
 
-    async def _get_task_result(self, task_id: str) -> Annotated[bool, "是否完成"]:
+    async def _get_task_result(self, task_id: str) -> Dict[str, Any]:
         url = self.base_url + "/tasks" + f"/{task_id}"  # type: ignore
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -305,14 +342,13 @@ class WanxDashscope(VideoEditBase):
                 headers=headers,
                 timeout=self.timeout,
             )
-        res = response.json()["output"]
-        status = res.get("status")
+        res = response.json().get("output", {})
+        status = res.get("task_status") or res.get("status")
         if status == "SUCCEEDED":
             log.info(f"Task {task_id} is SUCCEEDED")
-            return res
         else:
             log.info(f"Task {task_id} is {status}")
-            return res
+        return res
 
 
 class WanVideoEdit27Dashscope(VideoEditBase):
@@ -361,9 +397,22 @@ class WanVideoEdit27Dashscope(VideoEditBase):
         **kwargs: Any,
     ) -> ChatResult:
         temp = json.loads(cast(str, messages[-1].content))
+        progress_callback = cast(
+            Optional[Callable[[Dict[str, Any]], Any]], kwargs.get("progress_callback")
+        )
         prompt: str = temp["prompt"]
         image: List[str] = temp["image"]
         video: str = temp["video"]
+
+        detected_duration = await video_processor.detect_video_len(video)
+        if detected_duration < 2:
+            raise ValueError(
+                f"wan2.7-videoedit 要求输入视频时长 >= 2s，当前={detected_duration:.3f}s"
+            )
+        if detected_duration > 10:
+            raise ValueError(
+                f"wan2.7-videoedit 要求输入视频时长 <= 10s，当前={detected_duration:.3f}s"
+            )
 
         if not image:
             raise ValueError("wan2.7-videoedit 至少需要一张参考图")
@@ -387,9 +436,18 @@ class WanVideoEdit27Dashscope(VideoEditBase):
         if negative_prompt:
             input_data["negative_prompt"] = negative_prompt
 
+        req_duration = temp.get("duration", 0)
+        if req_duration not in (0, None):
+            if abs(float(req_duration) - detected_duration) > 0.5:
+                raise ValueError(
+                    "wan2.7-videoedit 要求 duration 与输入视频时长一致；"
+                    f"当前 duration={req_duration}, video_duration={detected_duration:.3f}s"
+                )
+
         parameters: Dict[str, Any] = {
             "resolution": temp.get("resolution", "1080P"),
-            "duration": temp.get("duration", 0),
+            # duration=0 让平台自动使用输入视频时长，可避免与输入时长不一致
+            "duration": 0,
             "audio_setting": temp.get("audio_setting", "origin"),
             "prompt_extend": temp.get("prompt_extend", False),
             "watermark": temp.get("watermark", False),
@@ -431,25 +489,31 @@ class WanVideoEdit27Dashscope(VideoEditBase):
             )
 
         res: dict = response.json()
-        task_id = None
-        if self.if_taskid:
-            task_id = res.get("output", {}).get("task_id")
-            log.info(f"wan2.7-videoedit task_id: {task_id}")
-            if not task_id:
-                raise ValueError(f"wan2.7-videoedit 未返回 task_id: {res}")
+        task_id = res.get("output", {}).get("task_id")
+        log.info(f"wan2.7-videoedit task_id: {task_id}")
+        if not task_id:
+            raise ValueError(f"wan2.7-videoedit 未返回 task_id: {res}")
+
+        polled = await self._wait_for_task_completion(
+            task_id,
+            progress_callback=progress_callback,
+        )
+        video_url = polled.get("video_url")
+        if not video_url:
+            raise ValueError(f"wan2.7-videoedit 任务成功但未返回 video_url: {polled}")
 
         return ChatResult(
             generations=[
                 ChatGeneration(
                     message=BaseMessage(
-                        content=task_id if task_id else "error",
+                        content=video_url,
                         type="video_edit,wan2.7-videoedit",
                     )
                 )
             ]
         )
 
-    async def _get_task_result(self, task_id: str) -> Annotated[bool, "是否完成"]:
+    async def _get_task_result(self, task_id: str) -> Dict[str, Any]:
         url = self.base_url + "/tasks" + f"/{task_id}"  # type: ignore
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -667,7 +731,6 @@ class Qwen3vlDashscope(VideoEditBase):
 
 
 qwen3vl_dashchat = Qwen3vlDashscope(**qwen3vl_dashscope.model_dump())
-
 
 wanx = WanxDashscope(**wanx_dashscpoe.model_dump())
 

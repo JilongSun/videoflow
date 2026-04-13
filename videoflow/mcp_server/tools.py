@@ -62,6 +62,8 @@ async def tool_run_video_workflow(
     image_input: str,
     video_keyword: str,
     video_input: str,
+    model_type: str = "wan2.7-videoedit",
+    model_options: Optional[dict] = None,
     session_id: Optional[str] = None,
 ) -> dict:
     """启动视频编辑工作流（第一阶段）。
@@ -69,7 +71,8 @@ async def tool_run_video_workflow(
     工具会立即返回 started 状态与 session_id，实际处理在后台执行。
     Agent 应在收到返回后立刻把 session_id 告知用户，方便后续查询进度。
 
-    对于 > 5 秒的视频，后台工作流会先处理首个分片并进入 waiting_approval；
+    对于超出模型单次上限的视频（如 runway 为 5 秒、wan2.7 为 10 秒），
+    后台工作流会先处理首个分片并进入 waiting_approval；
     Agent 通过 `tool_get_workflow_progress` 获取 interrupt_payload 进行用户确认，
     再调用 `tool_resume_video_workflow` 继续。
 
@@ -83,6 +86,8 @@ async def tool_run_video_workflow(
             若提示词不涉及参考图片，可传空字符串
         video_keyword: 视频关键词，用于素材检索或视频分析
         video_input: 本地视频路径
+        model_type: 模型类型，支持 wan2.7-videoedit/runway-gen4aleph；默认 wan2.7-videoedit
+        model_options: 模型可选参数（字典），例如 resolution/audio_setting/prompt_extend
         session_id: 会话 ID（可选，不提供则自动生成）
     """
     from videoflow.core.graph import VideoEditState
@@ -103,8 +108,11 @@ async def tool_run_video_workflow(
         video_keyword=video_keyword,
         session_id=sid,
         video_input=video_input,
+        model_type=model_type,
+        model_options=model_options,
     )
     progress_store.create_if_absent(sid)
+    progress_store.set_model_type(sid, model_type)
     progress_store.mark_start_requested(sid)
     asyncio.create_task(_run_workflow_bg(state, sid))
     log.info(f"工作流已启动（后台）: {sid}")
