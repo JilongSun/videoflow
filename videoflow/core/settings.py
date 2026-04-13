@@ -100,11 +100,12 @@ class ModelSettings(PlatformConfig):
 
 
 # 创建全局配置实例
-runway_ait8 = ModelSettings(
-    platform_name="ait8",
+
+wanx_dashscpoe = ModelSettings(
+    platform_name="dashscope",
     if_taskid=True,
-    model_name="runway-aleph",
-    end_point="/runway/v1/pro/aleph",
+    model_name="wanx2.1-vace-plus",
+    end_point="/services/aigc/video-generation/video-synthesis",
     status={
         "PENDING",
         "RUNNING",
@@ -115,10 +116,10 @@ runway_ait8 = ModelSettings(
     },
 )
 
-wanx_dashscpoe = ModelSettings(
+wan_videoedit27_dashscope = ModelSettings(
     platform_name="dashscope",
     if_taskid=True,
-    model_name="wanx2.1-vace-plus",
+    model_name="wan2.7-videoedit",
     end_point="/services/aigc/video-generation/video-synthesis",
     status={
         "PENDING",
@@ -155,6 +156,7 @@ qwen3vl_dashscope = ModelSettings(
 __all__ = [
     "runway_ait8",
     "wanx_dashscpoe",
+    "wan_videoedit27_dashscope",
     "gen4aleph_runway",
     "qwen_dashscope",
     "qwen3vl_dashscope",

@@ -151,7 +151,7 @@ class VideoProcessor(file_processor):
         return True
 
     async def get_file_path(self, filename: str, path: Optional[str] = None) -> str:
-        return str(Path(path or self.file_writer_folder) / filename)
+        return str((Path(path or self.file_writer_folder) / filename).resolve())
 
     @property
     def extensions(self) -> tuple[str, ...]:
@@ -257,7 +257,9 @@ class VideoProcessor(file_processor):
             raise ValueError(f"原视频缺少视频流: {original_path}")
         original_width = int(video_stream_original["width"])
         original_height = int(video_stream_original["height"])
-        original_fps = self._parse_fps(video_stream_original.get("r_frame_rate", "30/1"))
+        original_fps = self._parse_fps(
+            video_stream_original.get("r_frame_rate", "30/1")
+        )
 
         normalized_files: list[Path] = []
         for i, item in enumerate(video_list):
@@ -272,7 +274,9 @@ class VideoProcessor(file_processor):
                 .filter("setsar", "1/1")
                 .filter("fps", fps=original_fps)
             )
-            has_audio = any(s.get("codec_type") == "audio" for s in seg_probe["streams"])
+            has_audio = any(
+                s.get("codec_type") == "audio" for s in seg_probe["streams"]
+            )
             if has_audio:
                 seg_a = seg_in.audio
             else:
@@ -304,9 +308,7 @@ class VideoProcessor(file_processor):
             normalized_files.append(norm_path)
 
         concat_list_path = temp_dir / "concat_list.txt"
-        concat_content = "".join(
-            f"file '{p.as_posix()}'\n" for p in normalized_files
-        )
+        concat_content = "".join(f"file '{p.as_posix()}'\n" for p in normalized_files)
         async with aiofiles.open(concat_list_path, "w", encoding="utf-8") as f:
             await f.write(concat_content)
 

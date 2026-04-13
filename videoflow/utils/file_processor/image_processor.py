@@ -60,7 +60,7 @@ class ImageProcessor(file_processor):
         return True
 
     async def get_file_path(self, filename: str, path: Optional[str] = None) -> str:
-        return str(Path(path or self.file_writer_folder) / filename)
+        return str((Path(path or self.file_writer_folder) / filename).resolve())
 
     async def get_white_image(self, filename: str) -> str:
         path = await self.get_file_path(filename)

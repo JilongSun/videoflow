@@ -23,8 +23,8 @@ from typing import (
     Callable,
 )
 from .settings import (
-    runway_ait8,
     wanx_dashscpoe,
+    wan_videoedit27_dashscope,
     gen4aleph_runway,
     qwen_dashscope,
     ModelSettings,
@@ -52,8 +52,8 @@ import httpx, os, aiofiles, json, asyncio
 __all__ = [
     "gen4aleph",
     "qwendashchat",
-    "runway",
     "wanx",
+    "wan_videoedit27",
 ]
 
 
@@ -161,23 +161,45 @@ class VideoEditBase(BaseChatModel, ModelSettings, ABC):
 
 class WanxDashscope(VideoEditBase):
     """
-    阿里的wanx2.1-vace模型，废弃不用
+    阿里的wanx2.1-vace-plus模型(局部编辑)
     """
 
     async def ainvoke(  # type: ignore
         self,
+        prompt: str,
         image: List[str],
         video: str,
         mask_image: Optional[str] = None,
+        mask_frame_id: int = 1,
+        mask_type: str = "tracking",
+        expand_ratio: float = 0.05,
+        expand_mode: str = "hull",
+        control_condition: Optional[str] = None,
+        prompt_extend: bool = False,
+        watermark: bool = False,
+        size: str = "1280*720",
+        obj_or_bg: Optional[List[str]] = None,
+        seed: Optional[int] = None,
         config: RunnableConfig | None = None,
         *,
         stop: list[str] | None = None,
         **kwargs: Any,
     ):
         temp_dic = {
+            "prompt": prompt,
             "image": image,
             "video": video,
             "mask_image": mask_image,
+            "mask_frame_id": mask_frame_id,
+            "mask_type": mask_type,
+            "expand_ratio": expand_ratio,
+            "expand_mode": expand_mode,
+            "control_condition": control_condition,
+            "prompt_extend": prompt_extend,
+            "watermark": watermark,
+            "size": size,
+            "obj_or_bg": obj_or_bg,
+            "seed": seed,
         }
         return await super().ainvoke(json.dumps(temp_dic), config, stop=stop, **kwargs)
 
@@ -189,36 +211,57 @@ class WanxDashscope(VideoEditBase):
         **kwargs: Any,
     ) -> ChatResult:
         temp = json.loads(cast(str, messages[-1].content))
+        prompt: str = temp["prompt"]
         image: List[str] = temp["image"]
         video: str = temp["video"]
-        mask_image: str = temp["mask_image"]
-        image_url = await self._get_urls(image)
+        mask_image: Optional[str] = temp.get("mask_image")
+        if mask_image is None:
+            raise ValueError("wanx2.1-vace video_edit 需要传入 mask_image")
+
+        image_url = cast(List[str], await self._get_urls(image))
         video_url = await self._get_urls(video)
         mask_image_url = await self._get_urls(mask_image)
+
+        parameters: Dict[str, Any] = {
+            "mask_type": temp.get("mask_type", "tracking"),
+            "expand_ratio": temp.get("expand_ratio", 0.05),
+            "expand_mode": temp.get("expand_mode", "hull"),
+            "prompt_extend": temp.get("prompt_extend", False),
+            "watermark": temp.get("watermark", False),
+            "size": temp.get("size", "1280*720"),
+        }
+
+        control_condition = temp.get("control_condition")
+        if control_condition:
+            parameters["control_condition"] = control_condition
+
+        seed = temp.get("seed")
+        if seed is not None:
+            parameters["seed"] = seed
+
+        obj_or_bg = temp.get("obj_or_bg")
+        if obj_or_bg:
+            parameters["obj_or_bg"] = obj_or_bg
+
         url = self.base_url + self.end_point  # type: ignore
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "X-DashScope-Async": "enable",
         }
-        # todo: 这里的prompt需要根据实际的需求来修改
-        # todo: 还需要测试参考图像和obj
         input = {
-            "prompt": "将猫替换成黑猫,只需要做单纯的猫的替换，不要添加任何其他的元素，注意一定要显示风格的！",
+            "prompt": prompt,
             "function": "video_edit",
             "video_url": video_url,
-            # "ref_images_url": image_url,
+            "ref_images_url": image_url,
             "mask_image_url": mask_image_url,
-            "mask_frame_id": 1,
-            "options": {"seconds": 5},
+            "mask_frame_id": temp.get("mask_frame_id", 1),
         }
-        parameters = {
-            "obj_or_bg ": ["obj"],
-        }
+
         request_body = {
             "model": self.model_name,
             "input": input,
-            # "parameters": parameters,
+            "parameters": parameters,
         }
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -229,12 +272,17 @@ class WanxDashscope(VideoEditBase):
             )
         log.info(f"response.status_code: {response.status_code}")
         log.info(f"response.content: {response.content}")
+        if response.status_code >= 400:
+            raise ValueError(
+                f"wanx2.1-vace 请求失败: {response.status_code} {response.text}"
+            )
         res: dict = response.json()
         task_id = None
         if self.if_taskid:
-            task_id = res["output"]["task_id"]
+            task_id = res.get("output", {}).get("task_id")
             log.info(f"task_id: {task_id}")
-            # await self._wait_for_task_completion(task_id)
+            if not task_id:
+                raise ValueError(f"wanx2.1-vace 未返回 task_id: {res}")
 
         return ChatResult(
             generations=[
@@ -265,6 +313,160 @@ class WanxDashscope(VideoEditBase):
         else:
             log.info(f"Task {task_id} is {status}")
             return res
+
+
+class WanVideoEdit27Dashscope(VideoEditBase):
+    """
+    阿里的wan2.7-videoedit模型（指令编辑）
+    """
+
+    async def ainvoke(  # type: ignore
+        self,
+        prompt: str,
+        image: List[str],
+        video: str,
+        negative_prompt: Optional[str] = None,
+        resolution: str = "1080P",
+        duration: int = 0,
+        ratio: Optional[str] = None,
+        audio_setting: str = "origin",
+        prompt_extend: bool = False,
+        watermark: bool = False,
+        seed: Optional[int] = None,
+        config: RunnableConfig | None = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ):
+        temp_dic = {
+            "prompt": prompt,
+            "image": image,
+            "video": video,
+            "negative_prompt": negative_prompt,
+            "resolution": resolution,
+            "duration": duration,
+            "ratio": ratio,
+            "audio_setting": audio_setting,
+            "prompt_extend": prompt_extend,
+            "watermark": watermark,
+            "seed": seed,
+        }
+        return await super().ainvoke(json.dumps(temp_dic), config, stop=stop, **kwargs)
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        temp = json.loads(cast(str, messages[-1].content))
+        prompt: str = temp["prompt"]
+        image: List[str] = temp["image"]
+        video: str = temp["video"]
+
+        if not image:
+            raise ValueError("wan2.7-videoedit 至少需要一张参考图")
+        if len(image) > 4:
+            raise ValueError("wan2.7-videoedit 最多支持4张参考图")
+
+        image_urls = cast(List[str], await self._get_urls(image))
+        video_url = await self._get_urls(video)
+
+        media = [{"type": "video", "url": video_url}]
+        media.extend(
+            {"type": "reference_image", "url": image_url} for image_url in image_urls
+        )
+
+        input_data: Dict[str, Any] = {
+            "prompt": prompt,
+            "media": media,
+        }
+
+        negative_prompt = temp.get("negative_prompt")
+        if negative_prompt:
+            input_data["negative_prompt"] = negative_prompt
+
+        parameters: Dict[str, Any] = {
+            "resolution": temp.get("resolution", "1080P"),
+            "duration": temp.get("duration", 0),
+            "audio_setting": temp.get("audio_setting", "origin"),
+            "prompt_extend": temp.get("prompt_extend", False),
+            "watermark": temp.get("watermark", False),
+        }
+
+        ratio = temp.get("ratio")
+        if ratio:
+            parameters["ratio"] = ratio
+
+        seed = temp.get("seed")
+        if seed is not None:
+            parameters["seed"] = seed
+
+        request_body = {
+            "model": self.model_name,
+            "input": input_data,
+            "parameters": parameters,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-DashScope-Async": "enable",
+        }
+        url = self.base_url + self.end_point  # type: ignore
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=request_body,
+                timeout=self.timeout,
+            )
+
+        log.info(f"wan2.7-videoedit response.status_code: {response.status_code}")
+        log.info(f"wan2.7-videoedit response.content: {response.content}")
+        if response.status_code >= 400:
+            raise ValueError(
+                f"wan2.7-videoedit 请求失败: {response.status_code} {response.text}"
+            )
+
+        res: dict = response.json()
+        task_id = None
+        if self.if_taskid:
+            task_id = res.get("output", {}).get("task_id")
+            log.info(f"wan2.7-videoedit task_id: {task_id}")
+            if not task_id:
+                raise ValueError(f"wan2.7-videoedit 未返回 task_id: {res}")
+
+        return ChatResult(
+            generations=[
+                ChatGeneration(
+                    message=BaseMessage(
+                        content=task_id if task_id else "error",
+                        type="video_edit,wan2.7-videoedit",
+                    )
+                )
+            ]
+        )
+
+    async def _get_task_result(self, task_id: str) -> Annotated[bool, "是否完成"]:
+        url = self.base_url + "/tasks" + f"/{task_id}"  # type: ignore
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers=headers,
+                timeout=self.timeout,
+            )
+        res = response.json().get("output", {})
+        status = res.get("task_status") or res.get("status")
+        if status == "SUCCEEDED":
+            log.info(f"Task {task_id} is SUCCEEDED")
+        else:
+            log.info(f"Task {task_id} is {status}")
+        return res
 
 
 class Gen4AlephRunway(VideoEditBase):
@@ -357,47 +559,6 @@ class Gen4AlephRunway(VideoEditBase):
             file=Path(file), timeout=self.timeout
         )
         return response.uri
-
-
-class RunwayAit8(BaseModel):
-    """
-    ait8的runway模型暂时弃用，api调用似乎有问题，并且还需要接入langchain
-    """
-
-    model_name: str = Field(..., description="模型名称")
-    platform_name: str = Field(..., description="平台名称")
-    base_url: str = Field(..., description="API 基础 URL")
-    api_key: str = Field(..., description="API 密钥")  # 动态获取
-    timeout: Optional[Annotated[int, Field(description="API 请求超时时间（秒）")]] = 300
-    retries: Optional[Annotated[int, Field(description="API 请求重试次数")]] = 3
-    if_taskid: bool = Field(..., description="ai第三方是否是返回任务ID")
-    end_point: str = Field(..., description="API 路由")
-
-    async def _generate(self, image: str, video: str):
-        # image_url = await self.get_url(image)
-        # video_url = await self.get_url(video)
-        image_url = "https://files.closeai.fans/filesystem/uploads/54826/40a317576e75460e94cde709b9999e50/black_cat.webp"
-        video_url = "https://files.closeai.fans/filesystem/uploads/54826/abb0f2dccbd54db9a73f25dd50450bdf/test_0_3.mp4"
-        url = self.base_url + self.end_point
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-        }
-        request_body = {
-            "video": video_url,
-            "prompt": "按照图片替换视频中的猫",
-            "images": [image_url],
-            "options": {"seconds": 5},
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=request_body,
-                timeout=self.timeout,
-            )
-        print(response.status_code)
-        print(response.content)
 
 
 class QwenDashscopeChat(VideoEditBase):
@@ -507,9 +668,10 @@ class Qwen3vlDashscope(VideoEditBase):
 
 qwen3vl_dashchat = Qwen3vlDashscope(**qwen3vl_dashscope.model_dump())
 
-runway = RunwayAit8(**runway_ait8.model_dump())
 
 wanx = WanxDashscope(**wanx_dashscpoe.model_dump())
+
+wan_videoedit27 = WanVideoEdit27Dashscope(**wan_videoedit27_dashscope.model_dump())
 
 gen4aleph = Gen4AlephRunway(**gen4aleph_runway.model_dump())
 

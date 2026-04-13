@@ -60,7 +60,7 @@ class DocProcessor(file_processor):
         return True
 
     async def get_file_path(self, filename: str, path: Optional[str] = None) -> str:
-        return str(Path(path or self.file_writer_folder) / filename)
+        return str((Path(path or self.file_writer_folder) / filename).resolve())
 
     @property
     def extensions(self) -> tuple[str, ...]:
