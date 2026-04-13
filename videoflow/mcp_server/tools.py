@@ -128,7 +128,11 @@ async def _run_workflow_bg(state: Any, session_id: str) -> None:
         interrupted = result.get("__interrupt__")
         if interrupted:
             # 取第一个中断 payload（LangGraph 返回列表）
-            payload = interrupted[0].value if hasattr(interrupted[0], "value") else interrupted[0]
+            payload = (
+                interrupted[0].value
+                if hasattr(interrupted[0], "value")
+                else interrupted[0]
+            )
             progress_store.set_interrupt_payload(session_id, payload)
             progress_store.set_phase(session_id, WorkflowPhase.WAITING_APPROVAL)
             log.info(f"[bg] 工作流中断，等待确认: {session_id}")
@@ -136,9 +140,21 @@ async def _run_workflow_bg(state: Any, session_id: str) -> None:
             progress_store.set_result(session_id, result)
             log.info(f"[bg] 工作流完成: {session_id}")
     except Exception as e:
-        log.error(f"[bg] 工作流异常: {session_id} → {e}")
+        current = progress_store.get(session_id)
+        state_snapshot = {
+            "session_id": session_id,
+            "model_type": getattr(state, "model_type", None),
+            "image_input": getattr(state, "image_input", None),
+            "video_input": getattr(state, "video_input", None),
+            "video_keyword": getattr(state, "video_keyword", None),
+            "phase": current.phase.value if current is not None else None,
+        }
+        log.exception(
+            f"[bg] 工作流异常（含堆栈）: {session_id} | state={state_snapshot} | error={e}"
+        )
         progress_store.set_phase(session_id, WorkflowPhase.FAILED)
         progress_store.set_result(session_id, {"error": str(e)})
+        raise e
 
 
 @mcp.tool()
@@ -195,7 +211,11 @@ async def _resume_workflow_bg(session_id: str, decision: dict) -> None:
         progress_store.set_phase(session_id, WorkflowPhase.COMPLETED)
         log.info(f"[bg] 工作流恢复完成: {session_id}")
     except Exception as e:
-        log.error(f"[bg] 工作流恢复异常: {session_id} → {e}")
+        current = progress_store.get(session_id)
+        phase = current.phase.value if current is not None else None
+        log.exception(
+            f"[bg] 工作流恢复异常（含堆栈）: {session_id} | decision={decision} | phase={phase} | error={e}"
+        )
         progress_store.set_phase(session_id, WorkflowPhase.FAILED)
         progress_store.set_result(session_id, {"error": str(e)})
 

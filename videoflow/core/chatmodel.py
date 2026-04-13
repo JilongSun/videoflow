@@ -158,14 +158,23 @@ class VideoEditBase(BaseChatModel, ModelSettings, ABC):
         if not api_key:
             log.error("AIT8_API_KEY 环境变量未配置")
             raise ValueError("AIT8_API_KEY 环境变量未配置")
-        path = await get_file_path(file_name)
+
+        # 兼容纯文件名与本地路径两种输入。
+        # 纯文件名走 get_file_path 的安全目录映射；本地路径直接使用。
+        candidate = Path(file_name)
+        if candidate.is_file():
+            path = str(candidate.resolve())
+            upload_name = candidate.name
+        else:
+            path = await get_file_path(file_name)
+            upload_name = file_name
 
         # 使用异步文件操作
         async with aiofiles.open(path, "rb") as f:
             file_content = await f.read()
 
         # 构建异步上传的文件数据
-        files = {"file": (file_name, file_content, "application/octet-stream")}
+        files = {"file": (upload_name, file_content, "application/octet-stream")}
 
         headers = {
             "Authorization": f"Bearer {api_key}",

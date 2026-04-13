@@ -93,8 +93,7 @@ class ProgressStore:
             return
         p.total_slices = len(time_ranges)
         p.slices = [
-            SliceProgress(index=i, time_range=tr)
-            for i, tr in enumerate(time_ranges)
+            SliceProgress(index=i, time_range=tr) for i, tr in enumerate(time_ranges)
         ]
         p.updated_at = _now()
 
@@ -151,6 +150,7 @@ class ProgressStore:
             summary["model_type"] = p.model_type
         if p.model_task is not None:
             summary["model_task"] = p.model_task
+        log.info(f"[progress] 获取摘要: {session_id} | summary={summary}")
         return summary
 
     def set_interrupt_payload(self, session_id: str, payload: Dict[str, Any]) -> None:

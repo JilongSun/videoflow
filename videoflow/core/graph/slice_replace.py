@@ -203,7 +203,9 @@ class SliceReplaceWorkflow:
         def _dump() -> None:
             p = Path(state.manifest_path or "")
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            p.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
         await asyncio.to_thread(_dump)
 
@@ -319,7 +321,9 @@ class SliceReplaceWorkflow:
 
         state.video_time_slice = temp_list
         state.slice_manifest = manifest_items
-        progress_store.init_slices(state.session_id, [[r[0], r[1]] for r in time_ranges])
+        progress_store.init_slices(
+            state.session_id, [[r[0], r[1]] for r in time_ranges]
+        )
         await self._persist_manifest(state)
         return state
 
@@ -416,7 +420,9 @@ class SliceReplaceWorkflow:
                     video_path=state.video_input,
                     slice_index=0,
                     start=0.0,
-                    end=float(await video_processor.detect_video_len(state.video_input)),
+                    end=float(
+                        await video_processor.detect_video_len(state.video_input)
+                    ),
                 )
                 if res.content is None:
                     raise ValueError("视频编辑失败")
@@ -443,7 +449,9 @@ class SliceReplaceWorkflow:
         else:
             remaining = state.video_time_slice[1:]
             if remaining:
-                progress_store.set_phase(state.session_id, WorkflowPhase.BATCH_PROCESSING)
+                progress_store.set_phase(
+                    state.session_id, WorkflowPhase.BATCH_PROCESSING
+                )
                 log.info(f"开始并行处理剩余 {len(remaining)} 个分片")
 
                 async def _process_slice(idx: int, slice_video: str):
@@ -535,6 +543,7 @@ class SliceReplaceWorkflow:
         if progress_store.get(session_id) is None:
             progress_store.create(session_id)
         config = {"configurable": {"thread_id": session_id}}
+        log.info(f"工作流 ainvoke: session_id={session_id}, state={state}")
         return await self.workflow.ainvoke(state, config)  # type: ignore
 
     async def resume(self, session_id: str, decision: Dict[str, Any]) -> Dict[str, Any]:
